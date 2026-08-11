@@ -74,11 +74,11 @@ Each subfolder here is an untouched Gatling HTML report (open `index.html`):
 ```bash
 # 1. Start Redis + one app instance (or the full docker-compose topology)
 docker compose up -d redis
-mvn -DskipTests package
+./mvnw -DskipTests package
 REDIS_HOST=localhost REDIS_PORT=6379 SERVER_PORT=8080 java -jar target/distributed-rate-limiter-*.jar &
 
 # 2. Run any simulation
-mvn gatling:test -Dgatling.simulationClass=simulations.SustainedThroughputSimulation \
+./mvnw gatling:test -Dgatling.simulationClass=simulations.SustainedThroughputSimulation \
     -Dbase.url=http://localhost:8080
 
 # 3. Or the burst/correctness check directly:
