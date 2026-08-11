@@ -1,0 +1,47 @@
+spring:
+  application:
+    name: distributed-rate-limiter
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      lettuce:
+        pool:
+          enabled: true
+          max-active: ${REDIS_POOL_MAX_ACTIVE:32}
+          max-idle: ${REDIS_POOL_MAX_IDLE:16}
+          min-idle: ${REDIS_POOL_MIN_IDLE:4}
+          max-wait: 500ms
+        shutdown-timeout: 200ms
+
+server:
+  port: ${SERVER_PORT:8080}
+
+ratelimiter:
+  enabled: true
+  default-capacity: 50
+  default-refill-rate: 10 # tokens/sec
+  key-strategy: api-key # api-key | ip | user-id
+  api-key-header: X-API-Key
+  excluded-paths:
+    - /actuator/health
+    - /actuator/health/**
+    - /api/v1/limiter/**
+  endpoints:
+    /api/v1/resource:
+      capacity: 50
+      refill-rate: 10
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+logging:
+  level:
+    com.ratelimiter.distributed: INFO
