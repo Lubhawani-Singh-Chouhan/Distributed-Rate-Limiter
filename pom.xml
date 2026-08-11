@@ -21,6 +21,8 @@
     <properties>
         <java.version>21</java.version>
         <testcontainers.version>1.20.1</testcontainers.version>
+        <gatling.version>3.15.1</gatling.version>
+        <gatling-maven-plugin.version>4.21.10</gatling-maven-plugin.version>
     </properties>
 
     <dependencies>
@@ -76,6 +78,14 @@
             <version>4.2.2</version>
             <scope>test</scope>
         </dependency>
+
+        <!-- Load testing (Phase 4) -->
+        <dependency>
+            <groupId>io.gatling.highcharts</groupId>
+            <artifactId>gatling-charts-highcharts</artifactId>
+            <version>${gatling.version}</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <dependencyManagement>
@@ -84,6 +94,21 @@
                 <groupId>org.testcontainers</groupId>
                 <artifactId>testcontainers-bom</artifactId>
                 <version>${testcontainers.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!--
+              Gatling 3.15.x (Phase 4 load testing) requires Netty 4.2.x, newer than the
+              4.1.113.Final that spring-boot-starter-parent:3.3.4 pins for Lettuce elsewhere
+              on this classpath. Importing the matching netty-bom here (which takes
+              precedence over the parent's managed versions) unifies everything onto one
+              consistent Netty line so both Lettuce and Gatling's HTTP client resolve
+              correctly instead of throwing NoClassDefFoundError at runtime.
+            -->
+            <dependency>
+                <groupId>io.netty</groupId>
+                <artifactId>netty-bom</artifactId>
+                <version>4.2.14.Final</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -102,6 +127,21 @@
                             <artifactId>lombok</artifactId>
                         </exclude>
                     </excludes>
+                </configuration>
+            </plugin>
+            <!--
+              Runs with `mvn gatling:test -Dgatling.simulationClass=<FQCN>` against a
+              running instance of the app (see load-test-results/README.md). Kept out of
+              the default `mvn test` lifecycle since these hit a live server rather than
+              being self-contained unit/integration tests.
+            -->
+            <plugin>
+                <groupId>io.gatling</groupId>
+                <artifactId>gatling-maven-plugin</artifactId>
+                <version>${gatling-maven-plugin.version}</version>
+                <configuration>
+                    <runMultipleSimulations>false</runMultipleSimulations>
+                    <resultsFolder>${project.basedir}/load-test-results/gatling</resultsFolder>
                 </configuration>
             </plugin>
         </plugins>
