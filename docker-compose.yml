@@ -1,0 +1,14 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: ratelimiter-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+# App services are added in Phase 3 once the core Lua/token-bucket logic (Phase 1) and
+# the Spring Boot integration layer (Phase 2) are in place.
