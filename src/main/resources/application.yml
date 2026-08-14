@@ -28,10 +28,16 @@ ratelimiter:
     - /actuator/health
     - /actuator/health/**
     - /api/v1/limiter/**
-  endpoints:
-    /api/v1/resource:
-      capacity: 50
-      refill-rate: 10
+  # Per-endpoint overrides go here, e.g.:
+  #   endpoints:
+  #     /api/v1/some-path:
+  #       capacity: 20
+  #       refill-rate: 5
+  # /api/v1/resource intentionally has none, so it uses the global default bucket
+  # (scope "default") - the same one /api/v1/limiter/status?clientKey=... inspects.
+  # /api/v1/orders demonstrates the override mechanism instead, via the
+  # @RateLimit annotation directly on DemoController#createOrder/getLatestOrder.
+  endpoints: {}
 
 management:
   endpoints:
