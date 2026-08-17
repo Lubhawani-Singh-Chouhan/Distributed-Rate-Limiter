@@ -33,8 +33,14 @@ public class BurstSimulation extends Simulation {
     private static final int BURST_SIZE = Integer.getInteger("burst.size", 300);
     private static final String CLIENT_KEY = "burst-test-client-" + System.currentTimeMillis();
 
-    private final HttpProtocolBuilder httpProtocol =
-            http.baseUrl(BASE_URL).acceptHeader("application/json").userAgentHeader("gatling-burst-test");
+    // See SustainedThroughputSimulation for why shareConnections() matters here too:
+    // atOnceUsers(BURST_SIZE) opens BURST_SIZE simultaneous connections without it, which
+    // gets expensive/flaky on Windows load-generator machines once BURST_SIZE climbs into
+    // the thousands.
+    private final HttpProtocolBuilder httpProtocol = http.baseUrl(BASE_URL)
+            .acceptHeader("application/json")
+            .userAgentHeader("gatling-burst-test")
+            .shareConnections();
 
     private final ScenarioBuilder scenario = scenario("Single client burst past capacity")
             .exec(http("GET /api/v1/resource (burst)")

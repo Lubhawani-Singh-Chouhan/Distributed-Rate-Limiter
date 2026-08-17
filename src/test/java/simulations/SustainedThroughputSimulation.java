@@ -28,6 +28,13 @@ public class SustainedThroughputSimulation extends Simulation {
     private static final int TARGET_RPS = Integer.getInteger("target.rps", 500);
     private static final int RAMP_SECONDS = Integer.getInteger("ramp.seconds", 20);
     private static final int SUSTAIN_SECONDS = Integer.getInteger("sustain.seconds", 60);
+    // Tunable pass/fail budget, not just a display number: the ~50ms default was set against
+    // a native Linux Docker host. Windows/macOS Docker Desktop route host<->container traffic
+    // through an extra network-virtualization proxy layer that adds real latency independent
+    // of the app, so raise this (e.g. -Dmax.mean.latency.ms=200) rather than treating a failed
+    // assertion there as a rate-limiter bug.
+    private static final int MAX_MEAN_LATENCY_MS = Integer.getInteger("max.mean.latency.ms", 50);
+    private static final double MAX_ERROR_PERCENT = Double.parseDouble(System.getProperty("max.error.percent", "1.0"));
 
     private final AtomicInteger keySequence = new AtomicInteger();
 
@@ -47,8 +54,17 @@ public class SustainedThroughputSimulation extends Simulation {
         }
     };
 
-    private final HttpProtocolBuilder httpProtocol =
-            http.baseUrl(BASE_URL).acceptHeader("application/json").userAgentHeader("gatling-sustained-throughput");
+    // shareConnections() pools connections across all virtual users instead of opening one
+    // per user. Without this, an open workload model (rampUsersPerSec/constantUsersPerSec)
+    // opens a brand-new TCP connection per simulated user - fine on Linux, but on Windows
+    // the small default ephemeral port range + long TIME_WAIT hold time means a few thousand
+    // users/sec against localhost exhausts local ports within seconds (BindException:
+    // Address already in use), which looks like a server failure but is a client-side
+    // socket-exhaustion artifact of the load-generator's own OS, not the app under test.
+    private final HttpProtocolBuilder httpProtocol = http.baseUrl(BASE_URL)
+            .acceptHeader("application/json")
+            .userAgentHeader("gatling-sustained-throughput")
+            .shareConnections();
 
     private final ScenarioBuilder scenario = scenario("Sustained throughput across many tenants")
             .feed(clientKeyFeeder)
@@ -66,7 +82,7 @@ public class SustainedThroughputSimulation extends Simulation {
                 .assertions(
                         // 429 is a valid business response, not a system failure - only 5xx / connection
                         // errors should count against the "error rate" per spec section 4.3.
-                        global().failedRequests().percent().lte(1.0),
-                        global().responseTime().mean().lte(50));
+                        global().failedRequests().percent().lte(MAX_ERROR_PERCENT),
+                        global().responseTime().mean().lte(MAX_MEAN_LATENCY_MS));
     }
 }

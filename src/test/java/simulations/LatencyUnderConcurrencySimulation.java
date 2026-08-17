@@ -48,8 +48,10 @@ public class LatencyUnderConcurrencySimulation extends Simulation {
         }
     };
 
-    private final HttpProtocolBuilder httpProtocol =
-            http.baseUrl(BASE_URL).acceptHeader("application/json").userAgentHeader("gatling-latency-concurrency");
+    private final HttpProtocolBuilder httpProtocol = http.baseUrl(BASE_URL)
+            .acceptHeader("application/json")
+            .userAgentHeader("gatling-latency-concurrency")
+            .shareConnections();
 
     private final ScenarioBuilder scenario = scenario("Latency of the rate-limit check under concurrency")
             .feed(clientKeyFeeder)
