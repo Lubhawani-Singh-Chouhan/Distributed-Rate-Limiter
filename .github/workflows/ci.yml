@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  test:
+    name: Build & test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: "temurin"
+          cache: maven
+
+      # GitHub's ubuntu-latest runners ship Docker out of the box, so the
+      # Testcontainers-backed integration tests (real Redis, real Lua script,
+      # real concurrency) run exactly as they would on a dev machine - no mocks.
+      - name: Run unit + integration tests
+        run: ./mvnw -B test
+
+      - name: Build application jar
+        run: ./mvnw -B -DskipTests package
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: target/surefire-reports/
+          retention-days: 14

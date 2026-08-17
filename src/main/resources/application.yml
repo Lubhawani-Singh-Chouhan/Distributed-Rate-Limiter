@@ -1,0 +1,74 @@
+spring:
+  application:
+    name: distributed-rate-limiter
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      lettuce:
+        pool:
+          enabled: true
+          # Sized to a ~5k concurrent burst so Tomcat workers are not stuck on the default
+          # 32-connection pool (which would time out and fail-closed under load).
+          max-active: ${REDIS_POOL_MAX_ACTIVE:512}
+          max-idle: ${REDIS_POOL_MAX_IDLE:128}
+          min-idle: ${REDIS_POOL_MIN_IDLE:32}
+          max-wait: ${REDIS_POOL_MAX_WAIT:5s}
+        shutdown-timeout: 200ms
+
+  # Virtual threads (Java 21) keep a 5k-wide burst cheap: Tomcat can run thousands of
+  # concurrent requests without paying ~1MB native stack per platform thread.
+  threads:
+    virtual:
+      enabled: ${SPRING_THREADS_VIRTUAL_ENABLED:true}
+
+server:
+  port: ${SERVER_PORT:8080}
+  tomcat:
+    threads:
+      max: ${SERVER_TOMCAT_MAX_THREADS:5000}
+      min-spare: ${SERVER_TOMCAT_MIN_SPARE_THREADS:50}
+    # max-connections = connections Tomcat will hold; accept-count = OS listen backlog
+    # for SYNs that have not been accepted yet. The previous defaults (100 threads,
+    # accept-count 100) refused most of a 1k at-once burst with "connection refused".
+    max-connections: ${SERVER_TOMCAT_MAX_CONNECTIONS:10000}
+    accept-count: ${SERVER_TOMCAT_ACCEPT_COUNT:10000}
+    connection-timeout: ${SERVER_TOMCAT_CONNECTION_TIMEOUT:20s}
+    max-keep-alive-requests: ${SERVER_TOMCAT_MAX_KEEP_ALIVE_REQUESTS:10000}
+    mbeanregistry:
+      enabled: true
+
+ratelimiter:
+  enabled: true
+  default-capacity: 50
+  default-refill-rate: 10 # tokens/sec
+  key-strategy: api-key # api-key | ip | user-id
+  api-key-header: X-API-Key
+  excluded-paths:
+    - /actuator/health
+    - /actuator/health/**
+    - /api/v1/limiter/**
+  # Per-endpoint overrides go here, e.g.:
+  #   endpoints:
+  #     /api/v1/some-path:
+  #       capacity: 20
+  #       refill-rate: 5
+  # /api/v1/resource intentionally has none, so it uses the global default bucket
+  # (scope "default") - the same one /api/v1/limiter/status?clientKey=... inspects.
+  # /api/v1/orders demonstrates the override mechanism instead, via the
+  # @RateLimit annotation directly on DemoController#createOrder/getLatestOrder.
+  endpoints: {}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+logging:
+  level:
+    com.ratelimiter.distributed: INFO
