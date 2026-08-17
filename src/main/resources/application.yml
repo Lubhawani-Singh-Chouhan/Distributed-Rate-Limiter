@@ -17,6 +17,15 @@ spring:
 
 server:
   port: ${SERVER_PORT:8080}
+  tomcat:
+    threads:
+      # Spring Boot's Tomcat default (200 max threads) is sized for a dedicated host, not
+      # 3 co-located instances sharing a memory-constrained Docker Desktop VM - each thread
+      # carries its own ~1MB stack, so 3 x 200 = 600 threads alone can add ~600MB of stack
+      # memory under concurrent load. This keeps the demo's resource footprint predictable;
+      # raise it (env var, no rebuild needed) if load-testing on more capable hardware.
+      max: ${SERVER_TOMCAT_MAX_THREADS:100}
+      min-spare: ${SERVER_TOMCAT_MIN_SPARE_THREADS:10}
 
 ratelimiter:
   enabled: true
