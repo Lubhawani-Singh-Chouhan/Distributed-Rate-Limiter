@@ -33,5 +33,5 @@ EXPOSE 8080
 # OOM kill of one instance mid-test - which looks like a networking failure (nginx
 # reporting "connection refused" for the dead upstream) but is really a memory budgeting
 # gap. Override per-environment via `JAVA_OPTS=-Xmx768m docker compose up` if needed.
-ENV JAVA_OPTS="-Xms128m -Xmx384m"
+ENV JAVA_OPTS="-Xms256m -Xmx768m -Xss256k"
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar /app/app.jar"]

@@ -5,6 +5,7 @@ import static io.gatling.javaapi.http.HttpDsl.*;
 
 import io.gatling.javaapi.core.*;
 import io.gatling.javaapi.http.HttpProtocolBuilder;
+import java.time.Duration;
 
 /**
  * Spec Scenario B - Burst test.
@@ -31,6 +32,11 @@ public class BurstSimulation extends Simulation {
 
     private static final String BASE_URL = System.getProperty("base.url", "http://localhost:8080");
     private static final int BURST_SIZE = Integer.getInteger("burst.size", 300);
+    // atOnceUsers(5000) fires 5k TCP SYNs in one tick. On Windows the listen backlog
+    // (a kernel cap, independent of Tomcat acceptCount) drops most of them with
+    // Connection refused. A 4s ramp is still a tight ~5k burst for the app without
+    // that SYN flood. Override with -Dburst.ramp.ms=0 to force at-once.
+    private static final int RAMP_MS = Integer.getInteger("burst.ramp.ms", BURST_SIZE >= 1000 ? 4000 : 0);
     private static final String CLIENT_KEY = "burst-test-client-" + System.currentTimeMillis();
 
     // See SustainedThroughputSimulation for why shareConnections() matters here too:
@@ -49,7 +55,10 @@ public class BurstSimulation extends Simulation {
                     .check(status().in(200, 429)));
 
     {
-        setUp(scenario.injectOpen(atOnceUsers(BURST_SIZE)))
+        setUp(scenario.injectOpen(
+                        RAMP_MS <= 0
+                                ? atOnceUsers(BURST_SIZE)
+                                : rampUsers(BURST_SIZE).during(Duration.ofMillis(RAMP_MS))))
                 .protocols(httpProtocol)
                 .assertions(
                         // Anything other than 200/429 (5xx, timeouts, connection errors) is a

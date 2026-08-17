@@ -27,14 +27,10 @@ services:
       REDIS_PORT: 6379
       SERVER_PORT: 8080
       INSTANCE_ID: app-instance-1
-      # Keeps 3 co-located instances within a predictable combined memory footprint on
-      # memory-constrained hosts (e.g. Docker Desktop's default WSL2 VM on an 8GB laptop).
-      # Override with a bigger value (e.g. `-Xmx768m`) if running on more capable hardware.
-      JAVA_OPTS: "-Xms128m -Xmx384m"
-    # Hard backstop matching JAVA_OPTS above, so a runaway/leaking process gets OOM-killed
-    # at a predictable ~450MB rather than being free to pressure the whole Docker VM (and
-    # therefore the other 2 instances + Redis) into the host-level OOM killer instead.
-    mem_limit: 450m
+      # Heap sized for a ~5k concurrent burst on virtual threads (cheap stacks).
+      # Override downward (e.g. `-Xmx384m`) on memory-constrained Docker Desktop VMs.
+      JAVA_OPTS: "-Xms256m -Xmx768m -Xss256k"
+    mem_limit: 1g
     ports:
       - "8081:8080"
     healthcheck:
