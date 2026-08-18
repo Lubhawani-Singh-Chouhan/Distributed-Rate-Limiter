@@ -1,8 +1,24 @@
 # Distributed Rate Limiter
 
 A distributed, Redis-backed **Token Bucket** rate limiter for Spring Boot — thread-safe and
-horizontally scalable across multiple application instances via a single atomic Lua script,
-load-tested to comfortably clear ~500 req/sec at low-single-digit-millisecond average latency.
+horizontally scalable across multiple application instances via a single atomic Lua script.
+
+**Measured:** ~**1,000 req/s for 60s** on a single instance (70,010 requests, p95 **19 ms**,
+**0%** errors). Raw Gatling report:
+[`load-test-results/gatling/sustainedthroughputsimulation-20260818040033152/index.html`](load-test-results/gatling/sustainedthroughputsimulation-20260818040033152/index.html).
+
+## Highlights
+
+- **Atomic distributed quota** — Redis Lua (`EVALSHA`) so concurrent requests across many
+  app instances cannot double-allow. A servlet `Filter` at `HIGHEST_PRECEDENCE` rejects
+  over-quota traffic before the controller (and before auth, if any).
+- **3-instance topology** — Docker Compose runs three identical Spring Boot instances behind
+  nginx round-robin; the only shared state is Redis 7.
+- **Sustained 1k rps** — Gatling open-model run: 20s ramp + 60s at 1,000 req/s, 200 API keys.
+  Sustain phase held ~1,001 req/s. Virtual threads, a pre-warmed Lettuce pool, and Lua SHA
+  warmup keep latency flat after ramp-up.
+- **Correctness + ops** — `@RateLimit` / YAML per-endpoint overrides, fail-closed Redis
+  errors, Testcontainers integration tests, and Gatling burst/throughput/latency simulations.
 
 ## Problem statement
 
@@ -132,15 +148,15 @@ ratelimiter:
   excluded-paths:
     - /actuator/health
     - /api/v1/limiter/**
-  endpoints:
-    /api/v1/resource:
-      capacity: 50
-      refill-rate: 10
 ```
 
-All Redis connection settings (`spring.data.redis.host/port`, Lettuce pool sizing) are
-environment-variable driven — see `docker-compose.yml` — so the same image runs unmodified as
-any of the 3 instances.
+High-traffic defaults (all overridable by env): Java 21 virtual threads, Tomcat
+`max-connections` / `accept-count` 10,000, Lettuce pool min-idle 64 / max-active 128, 1s
+Redis command timeout. Redis connections and `token_bucket.lua` EVALSHA are warmed **before**
+Tomcat accepts traffic (`RateLimiterWarmup`).
+
+Redis host/port and pool sizing are environment-variable driven — see `docker-compose.yml` —
+so the same image runs unmodified as any of the 3 instances.
 
 ## API
 
@@ -203,26 +219,38 @@ In a Docker-less environment, the same suite can point at an already-running Red
 ### Load tests
 
 ```bash
-./mvnw gatling:test -Dgatling.simulationClass=simulations.SustainedThroughputSimulation -Dbase.url=http://localhost:8080
+# Headline 1k rps / 60s sustain run:
+./mvnw gatling:test -Dgatling.simulationClass=simulations.SustainedThroughputSimulation \
+    -Dbase.url=http://localhost:8080 -Dtarget.rps=1000 -Dramp.seconds=20 -Dsustain.seconds=60
+
 ./mvnw gatling:test -Dgatling.simulationClass=simulations.BurstSimulation -Dbase.url=http://localhost:8080
 ./mvnw gatling:test -Dgatling.simulationClass=simulations.LatencyUnderConcurrencySimulation -Dbase.url=http://localhost:8080
 ```
 
+Reports land in `load-test-results/gatling/<simulation>-<timestamp>/`. Open `index.html`.
+
 ## Load test results
 
-Real numbers, not estimates — see [`load-test-results/README.md`](load-test-results/README.md)
-for the full write-up, caveats, and raw Gatling HTML reports.
+Real numbers — see [`load-test-results/README.md`](load-test-results/README.md) for environment,
+caveats, and the HTML reports.
 
-| Scenario | Throughput | Mean latency | p95 | p99 | Errors (5xx) |
+| Scenario | Throughput | Mean | p95 | p99 | Errors |
 |---|---|---|---|---|---|
-| A — Sustained throughput (~500 rps target) | 437.6 req/s mean over ramp+sustain | 1 ms | 1 ms | 2 ms | 0% |
+| **A — 1k rps sustain (60s)** | **~1,001 req/s** in the 60s sustain window (70,010 / 70,010; 875 req/s mean including 20s ramp) | **9 ms** | **19 ms** | **42 ms** | **0%** |
 | B — Burst past capacity (50) | 63 allowed / 237 denied, first 429 at request #53 | — | — | — | 0% |
-| C — Latency under concurrency (30 users, closed model) | 33,128 req/s | 1 ms | 2 ms | 4 ms | 0% |
+| C — Latency under concurrency (30 users, closed model, same-host Redis) | 33,128 req/s | 1 ms | 2 ms | 4 ms | 0% |
 
-These were captured on a single instance talking to a local Redis (no Docker network hop, no
-nginx) since Docker wasn't available in the sandbox this was built in — see the load test
-README for exactly what that does and doesn't change about the results, and how to re-run
-against the full 3-instance/nginx topology.
+**Headline report (Scenario A):**
+[`load-test-results/gatling/sustainedthroughputsimulation-20260818040033152/index.html`](load-test-results/gatling/sustainedthroughputsimulation-20260818040033152/index.html)
+
+Scenario A was a **single Spring Boot instance** with **Redis 7 in Docker** (Windows). 200
+distinct `X-API-Key` tenants so the test measures limiter throughput, not one client's 10
+token/s refill. One key is still capped at `default-capacity=50` / `default-refill-rate=10`.
+The 3-instance + nginx topology was not this 1k run — re-run with `-Dbase.url=http://localhost:8080`
+after `docker compose up --build` for that number.
+
+Scenario C (and an older ~500 rps / 1 ms Scenario A) were captured against **same-host Redis
+with no Docker hop**; see the load-test README.
 
 ## Design decisions & trade-offs
 

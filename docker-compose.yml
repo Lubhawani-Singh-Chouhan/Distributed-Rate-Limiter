@@ -2,6 +2,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: ratelimiter-redis
+    command: redis-server --save "" --appendonly no --tcp-backlog 511 --tcp-keepalive 60 --maxclients 20000 --hz 100
     networks:
       - ratelimiter-net
     ports:
@@ -29,7 +30,7 @@ services:
       INSTANCE_ID: app-instance-1
       # Heap sized for a ~5k concurrent burst on virtual threads (cheap stacks).
       # Override downward (e.g. `-Xmx384m`) on memory-constrained Docker Desktop VMs.
-      JAVA_OPTS: "-Xms256m -Xmx768m -Xss256k"
+      JAVA_OPTS: "-Xms256m -Xmx768m -Xss256k -XX:+UseG1GC -XX:MaxGCPauseMillis=20 -XX:+AlwaysPreTouch -Djava.net.preferIPv4Stack=true"
     mem_limit: 1g
     ports:
       - "8081:8080"

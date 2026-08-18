@@ -1,86 +1,84 @@
 # Load test results
 
-Real, measured runs — not estimates. Per the spec's suggested workflow, these were executed
-locally (Gatling `mvn gatling:test`, plus one plain curl-loop script for the burst scenario's
-exact 200-vs-429 split) rather than guessed.
+Real, measured runs — not estimates. Gatling HTML reports live under `gatling/<simulation>-<timestamp>/`
+(open `index.html`). 429s are treated as passing HTTP checks; only 5xx / connection failures
+count as Gatling `KO`.
 
-## Environment these numbers were captured in
+## Headline run — 1,000 req/s for 60s
 
-**Important caveat:** these specific numbers were captured against a **single app instance**
-talking to a **local Redis on the same host** (no Docker, no nginx hop) — the sandbox used to
-build this project didn't have a Docker daemon available. That means:
+**Report:** [`gatling/sustainedthroughputsimulation-20260818040033152/index.html`](gatling/sustainedthroughputsimulation-20260818040033152/index.html)
 
-- No network hop between app and Redis (both on loopback) — real Docker-network latency will
-  be higher.
-- Only one JVM/instance handling all traffic, not the 3-instance + nginx topology Phase 3
-  describes — nginx adds a small proxying overhead, and 3 instances change how load balances
-  but not the per-request Redis round-trip cost, since the Lua script's cost is what's actually
-  being measured here.
-- Single moderate-core cloud sandbox VM, not dedicated benchmarking hardware.
+| | |
+|---|---|
+| Date | 2026-08-18 04:00:36 GMT (duration 1m 19s) |
+| Simulation | `SustainedThroughputSimulation` |
+| Command | `mvn gatling:test -Dgatling.simulationClass=simulations.SustainedThroughputSimulation -Dbase.url=http://127.0.0.1:8080 -Dtarget.rps=1000 -Dramp.seconds=20 -Dsustain.seconds=60 -Dmax.mean.latency.ms=50` |
+| Target | 1 Spring Boot instance (`mvnw spring-boot:run`) + Redis 7 in Docker Desktop, Windows |
+| Workload | Open model, 200 rotating `X-API-Key` tenants, `GET /api/v1/resource` |
+| Offered | 20s ramp 1→1000 rps, then 60s at 1000 rps |
+| Completed | **70,010 / 70,010** (exactly the offered load) |
+| Errors | **0** (0% KO) |
+| Full-run mean throughput | 875.12 req/s (ramp included) |
+| Sustain (~last 60s) | **~1,001 req/s** (60,061 requests after the ramp) |
+| Latency | mean **9 ms**, p50 7 ms, p75 9 ms, p95 **19 ms**, p99 **42 ms**, max 274 ms |
+| Assertions | failed-events ≤ 1% **OK**; mean RT ≤ 50 ms **OK** |
 
-Re-run everything below with `-Dbase.url=http://localhost:8080` pointed at the real
-`docker compose up` nginx endpoint (see root README) to get topology-accurate numbers; the
-methodology and simulations are unchanged either way. The core finding — that the Lua-script
-Redis round trip itself is sub-millisecond to low-single-digit-millisecond — should hold in
-both setups, since that cost isn't sensitive to how many app instances sit in front of Redis.
+This is the number to quote for a “~1k rps sustained” claim. It is **not** “one client is
+allowed 1,000 req/s”: `default-refill-rate` is 10 tokens/s per key (burst 50). Many keys are
+how 1k limiter **decisions**/sec stay inside the buckets.
 
-Command used to start the target instance for these runs:
+It is also **not** the 3-instance nginx topology. Re-run the same command against
+`http://localhost:8080` after `docker compose up --build` for that measurement.
 
-```bash
-REDIS_HOST=localhost REDIS_PORT=6379 SERVER_PORT=8080 INSTANCE_ID=local-loadtest \
-  java -jar target/distributed-rate-limiter-1.0.0.jar
-```
+## Earlier sandbox runs (same-host Redis, no Docker)
 
-## Results
+These were captured against a **single app instance** talking to **Redis on the same host**
+(no Docker network hop, no nginx) while the original sandbox had no Docker daemon:
 
-| Scenario | Command | Throughput | Mean latency | p95 | p99 | Error rate (5xx) |
+| Scenario | Command | Throughput | Mean | p95 | p99 | Errors |
 |---|---|---|---|---|---|---|
-| A — Sustained throughput | `mvn gatling:test -Dgatling.simulationClass=simulations.SustainedThroughputSimulation -Dtarget.rps=500 -Dramp.seconds=10 -Dsustain.seconds=30` | 437.6 req/s mean over the full run (ramp-up included; sustain-phase rate approaches the 500 target) | 1 ms | 1 ms | 2 ms | 0% |
-| B — Burst (correctness) | `scripts` equivalent: 300 sequential requests, single client, `default-capacity=50` | 63 allowed / 237 denied (first 429 at request #53) | n/a (correctness test) | n/a | n/a | 0% |
-| C — Latency under concurrency | `mvn gatling:test -Dgatling.simulationClass=simulations.LatencyUnderConcurrencySimulation -Dconcurrent.users=30 -Dduration.seconds=8` | 33,128 req/s (closed-model, 30 concurrent users hammering as fast as possible) | 1 ms | 2 ms | 4 ms | 0% |
+| A' — Sustained ~500 rps | `-Dtarget.rps=500 -Dramp.seconds=10 -Dsustain.seconds=30` | 437.6 req/s mean over ramp+sustain | 1 ms | 1 ms | 2 ms | 0% |
+| B — Burst past capacity (50) | 300 sequential requests, one client | 63 allowed / 237 denied, first 429 at #53 | n/a | n/a | n/a | 0% |
+| C — Latency under concurrency | `-Dconcurrent.users=30 -Dduration.seconds=8` | 33,128 req/s (closed model) | 1 ms | 2 ms | 4 ms | 0% |
 
-429s are counted separately from errors in every run above (all three simulations' HTTP
-checks explicitly accept `200` and `429` as "passing"; only 5xx/connection failures would show
-up as Gatling `KO`/failed requests, and there were none).
+**Scenario B detail:** `default-capacity=50`, `default-refill-rate=10`, 300 back-to-back
+requests in 1.38s. 63 allowed (50 burst + ~14 refill) / 237 × 429. First rejection at
+request #53 — the limiter enforces the configured threshold precisely, not “roughly.”
 
-**Scenario B detail:** with `ratelimiter.default-capacity=50` and `default-refill-rate=10`,
-300 back-to-back requests from one client completed in 1.38s. 63 were allowed (the extra 13
-over the 50 capacity is refill during that 1.38s window: `10 tokens/sec * 1.38s ≈ 13.8`,
-matching almost exactly) and 237 were rejected with 429, with the first rejection landing at
-request #53 — right where a capacity-50 bucket (plus a couple of tokens refilled during the
-first 53 requests) should start rejecting. This is the correctness proof: the limiter enforces
-the configured threshold precisely, not "roughly."
+Same-host Redis explains the 1 ms band vs the 9 ms mean on the Docker-Redis 1k run. The Lua
+round-trip is still the dominant cost; Docker Desktop adds a host↔container hop.
 
-**Scenario A/C vs. the ~500 req/s / sub-10ms resume claim:** on this single-instance,
-same-host-Redis setup the limiter comfortably clears both figures — mean/p95 latency is in the
-1-4ms range even under 30-user closed-model concurrency, and Scenario A held ~500 req/s at that
-same latency band. The full 3-instance-behind-nginx topology (Phase 3) is expected to add a few
-ms of network/proxy overhead per hop, still comfortably inside a "sub-10ms average" budget,
-but should be re-measured on real infrastructure before being quoted as a final number.
+Committed HTML for those older Gatling runs:
+
+- `gatling/burstsimulation-20260811193555659/`
+- `gatling/sustainedthroughputsimulation-20260811193702974/`
+- `gatling/latencyunderconcurrencysimulation-20260811193817553/`
 
 ## Raw reports
 
-Each subfolder here is an untouched Gatling HTML report (open `index.html`):
-
-- `gatling/burstsimulation-*/` — Scenario B's Gatling run (used to confirm zero 5xx/timeouts
-  under an all-at-once burst; the precise 200/429 split above was captured via a plain
-  sequential curl loop instead, since Gatling's built-in success/failure split tracks check
-  outcome — and both 200 and 429 are configured as "passing" — not raw HTTP status).
-- `gatling/sustainedthroughputsimulation-*/` — Scenario A.
-- `gatling/latencyunderconcurrencysimulation-*/` — Scenario C.
+| Folder | What it is |
+|---|---|
+| [`gatling/sustainedthroughputsimulation-20260818040033152/`](gatling/sustainedthroughputsimulation-20260818040033152/index.html) | **Headline 1k rps / 60s sustain** (Scenario A) |
+| `gatling/burstsimulation-*/` | Burst / correctness (200 and 429 both “pass” in Gatling; use a sequential loop for the exact 200/429 split) |
+| `gatling/sustainedthroughputsimulation-*/` | Sustained throughput (open model) |
+| `gatling/latencyunderconcurrencysimulation-*/` | Closed-model concurrency |
 
 ## Reproducing
 
 ```bash
-# 1. Start Redis + one app instance (or the full docker-compose topology)
 docker compose up -d redis
-./mvnw -DskipTests package
-REDIS_HOST=localhost REDIS_PORT=6379 SERVER_PORT=8080 java -jar target/distributed-rate-limiter-*.jar &
+./mvnw spring-boot:run
 
-# 2. Run any simulation
+# Headline 1k / 60s run
 ./mvnw gatling:test -Dgatling.simulationClass=simulations.SustainedThroughputSimulation \
-    -Dbase.url=http://localhost:8080
+    -Dbase.url=http://127.0.0.1:8080 -Dtarget.rps=1000 -Dramp.seconds=20 -Dsustain.seconds=60 \
+    -Dmax.mean.latency.ms=50
 
-# 3. Or the burst/correctness check directly:
-./scripts/verify-distributed-limit.sh http://localhost:8080 300
+# Burst / closed-model
+./mvnw gatling:test -Dgatling.simulationClass=simulations.BurstSimulation -Dbase.url=http://127.0.0.1:8080
+./mvnw gatling:test -Dgatling.simulationClass=simulations.LatencyUnderConcurrencySimulation -Dbase.url=http://127.0.0.1:8080
+
+# Shared limit across the 3-instance nginx topology
+docker compose up --build
+./scripts/verify-distributed-limit.sh http://localhost:8080 80
 ```

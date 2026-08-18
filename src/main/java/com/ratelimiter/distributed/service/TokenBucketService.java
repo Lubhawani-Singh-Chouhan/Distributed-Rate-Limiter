@@ -46,13 +46,19 @@ public class TokenBucketService {
         String bucketKey = RateLimitKeyBuilder.bucketKey(clientKey);
         long nowMs = System.currentTimeMillis();
 
-        List<Long> result = redisTemplate.execute(
-                tokenBucketScript,
-                List.of(bucketKey),
-                String.valueOf(capacity),
-                String.valueOf(refillRatePerSecond),
-                String.valueOf(nowMs),
-                String.valueOf(requestedTokens));
+        List<Long> result;
+        try {
+            result = redisTemplate.execute(
+                    tokenBucketScript,
+                    List.of(bucketKey),
+                    String.valueOf(capacity),
+                    String.valueOf(refillRatePerSecond),
+                    String.valueOf(nowMs),
+                    String.valueOf(requestedTokens));
+        } catch (RuntimeException e) {
+            log.error("Redis token-bucket call failed for key {}: {}", bucketKey, e.getMessage());
+            return RateLimitResult.denied(0, 1000, capacity);
+        }
 
         if (result == null || result.size() < 3) {
             log.error("Unexpected empty response from token_bucket.lua for key {}", bucketKey);

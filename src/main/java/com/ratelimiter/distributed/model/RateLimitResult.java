@@ -25,20 +25,10 @@ public class RateLimitResult {
     private final long capacity;
 
     public static RateLimitResult allowed(long remainingTokens, long capacity) {
-        return RateLimitResult.builder()
-                .allowed(true)
-                .remainingTokens(remainingTokens)
-                .retryAfterMs(0L)
-                .capacity(capacity)
-                .build();
+        return new RateLimitResult(true, remainingTokens, 0L, capacity);
     }
 
     public static RateLimitResult denied(long remainingTokens, long retryAfterMs, long capacity) {
-        return RateLimitResult.builder()
-                .allowed(false)
-                .remainingTokens(remainingTokens)
-                .retryAfterMs(retryAfterMs)
-                .capacity(capacity)
-                .build();
+        return new RateLimitResult(false, remainingTokens, retryAfterMs, capacity);
     }
 }
