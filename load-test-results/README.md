@@ -4,28 +4,37 @@ Real, measured runs — not estimates. Gatling HTML reports live under `gatling/
 (open `index.html`). 429s are treated as passing HTTP checks; only 5xx / connection failures
 count as Gatling `KO`.
 
-## Headline run — 1,000 req/s for 60s
+## Headline run — Gatling stats table (2026-08-18 17:26:54 GMT)
 
 **Report:** [`gatling/sustainedthroughputsimulation-20260818172653414/index.html`](gatling/sustainedthroughputsimulation-20260818172653414/index.html)
+
+Open that HTML and read the **Stats** table. Those cells are the numbers to quote:
+
+| Stats table cell | Value |
+|---|---|
+| Total / OK / KO | **70010 / 70010 / 0** |
+| Cnt/s | **864.32** (full run, **including** the 20s ramp) |
+| Mean / 50th / 75th / 95th / 99th / Max | **5 / 5 / 6 / 10 / 19 / 78** ms |
+
+| Not in the Stats table | Where it actually is |
+|---|---|
+| ~1,000 rps sustain | **Requests / sec** chart in the same HTML (plateau after ramp) |
+| 200 tenants | [`SustainedThroughputSimulation.java`](../src/test/java/simulations/SustainedThroughputSimulation.java) `TENANT_POOL_SIZE` (default 200) |
+| Offered 1,000 rps | `-Dtarget.rps=1000` (now also the class default) |
 
 | | |
 |---|---|
 | Date | 2026-08-18 17:26:54 GMT (duration 1m 20s) |
-| Simulation | [`SustainedThroughputSimulation.java`](../src/test/java/simulations/SustainedThroughputSimulation.java) (open model, 200 tenants) |
 | Command | `mvn gatling:test -Dgatling.simulationClass=simulations.SustainedThroughputSimulation -Dbase.url=http://127.0.0.1:8080 -Dtarget.rps=1000 -Dramp.seconds=20 -Dsustain.seconds=60 -Dmax.mean.latency.ms=50` |
 | Target | 1 Spring Boot instance (`mvnw spring-boot:run`) + Redis 7 in Docker Desktop, Windows |
-| Workload | Open model, 200 rotating `X-API-Key` tenants, `GET /api/v1/resource` |
+| Workload | Open model, `GET /api/v1/resource`, rotating `loadtest-tenant-*` keys |
 | Offered | 20s ramp 1→1000 rps, then 60s at 1000 rps |
-| Completed | **70,010 / 70,010** (exactly the offered load) |
-| Errors | **0** (0% KO) |
-| Full-run mean throughput | 864.32 req/s (ramp included) |
-| Sustain (~last 60s) | **~1,000 req/s** |
-| Latency | mean **5 ms**, p50 5 ms, p75 6 ms, p95 **10 ms**, p99 **19 ms**, max 78 ms |
 | Assertions | failed-events ≤ 1% **OK**; mean RT ≤ 50 ms **OK** |
 
-This is the number to quote for a “~1k rps sustained” claim. It is **not** “one client is
-allowed 1,000 req/s”: `default-refill-rate` is 10 tokens/s per key (burst 50). Many keys are
-how 1k limiter **decisions**/sec stay inside the buckets.
+Do not quote Cnt/s 864.32 as “failed to hit 1k”, and do not quote the chart plateau as if Gatling printed “1000” in the summary. They are different windows of the same run.
+
+This is **not** “one client is allowed 1,000 req/s”: `default-refill-rate` is 10 tokens/s per
+key (burst 50). Many keys are how 1k limiter **decisions**/sec stay inside the buckets.
 
 It is also **not** the 3-instance nginx topology. Re-run the same command against
 `http://localhost:8080` after `docker compose up --build` for that measurement.
@@ -58,7 +67,7 @@ Committed HTML for those older Gatling runs:
 
 | Folder | What it is |
 |---|---|
-| [`gatling/sustainedthroughputsimulation-20260818172653414/`](gatling/sustainedthroughputsimulation-20260818172653414/index.html) | **Headline 1k rps / 60s sustain** (Scenario A) |
+| [`gatling/sustainedthroughputsimulation-20260818172653414/`](gatling/sustainedthroughputsimulation-20260818172653414/index.html) | **Headline report** — Stats: 70010/70010, Cnt/s 864.32; Requests/sec chart is the ~1k plateau |
 | [`gatling/sustainedthroughputsimulation-20260818040033152/`](gatling/sustainedthroughputsimulation-20260818040033152/index.html) | Earlier 1k rps / 60s run (p95 19 ms) |
 | `gatling/burstsimulation-*/` | Burst / correctness (200 and 429 both “pass” in Gatling; use a sequential loop for the exact 200/429 split) |
 | `gatling/sustainedthroughputsimulation-*/` | Sustained throughput (open model) |

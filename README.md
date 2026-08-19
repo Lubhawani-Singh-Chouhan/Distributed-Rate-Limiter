@@ -5,9 +5,13 @@ A Redis-backed, atomic token-bucket limiter for multi-instance Spring Boot apps.
 Distributed, thread-safe, and horizontally scalable: every allow/deny is one Redis Lua
 script (`EVALSHA`), so N instances share one quota instead of N copies of it.
 
-**Measured:** ~**1,000 req/s for 60s** on a single instance (70,010 requests, p95 **10 ms**,
-**0%** errors). Raw Gatling report:
+**Measured (Gatling stats table, not a rounded claim):** **70,010 / 70,010** OK, **864.32 req/s**
+mean (Cnt/s), p95 **10 ms**, **0** KO —
 [`load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html`](load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html).
+Cnt/s includes the 20s ramp; the same report’s **Requests / sec** chart is the sustain plateau
+(~1,000 after `-Dtarget.rps=1000`). Tenant count is `TENANT_POOL_SIZE` in
+[`SustainedThroughputSimulation.java`](src/test/java/simulations/SustainedThroughputSimulation.java)
+(default **200**), not a field Gatling prints.
 
 ## Highlights
 
@@ -17,9 +21,10 @@ script (`EVALSHA`), so N instances share one quota instead of N copies of it.
 - **3-instance topology** — Docker Compose runs three identical Spring Boot instances behind
   nginx round-robin; the only shared state is Redis 7. Kill instance 2 mid-load: the shared
   bucket still exhausts at ~capacity, not 2× (see [Failure case](#failure-case-kill-an-instance-mid-load)).
-- **Sustained 1k rps** — Gatling **open model** (`SustainedThroughputSimulation`): 20s ramp +
-  60s at 1,000 req/s across **200 tenants**. Sustain held ~1,000 req/s (p95 **10 ms**).
-  Virtual threads, a pre-warmed Lettuce pool, and Lua SHA warmup keep latency flat after ramp-up.
+- **Load (verbatim from the Gatling stats table)** — 70,010 / 70,010 OK, Cnt/s **864.32**,
+  p95 **10 ms**, 0 KO. Open-model [`SustainedThroughputSimulation`](src/test/java/simulations/SustainedThroughputSimulation.java)
+  (`target.rps` default **1000**, `TENANT_POOL_SIZE` default **200**). The ~1,000 plateau is
+  the **Requests / sec** chart in that HTML, not the Cnt/s cell.
 - **Correctness + ops** — `@RateLimit` / YAML per-endpoint overrides, fail-closed Redis
   errors, Testcontainers integration tests, and Gatling burst/throughput/latency simulations.
 
@@ -277,27 +282,29 @@ Reports land in `load-test-results/gatling/<simulation>-<timestamp>/`. Open `ind
 Real numbers — see [`load-test-results/README.md`](load-test-results/README.md) for environment,
 caveats, and the HTML reports.
 
-| Scenario | Throughput | Mean | p95 | p99 | Errors |
+| Scenario | What Gatling printed | Mean | p95 | p99 | Errors |
 |---|---|---|---|---|---|
-| **A — 1k rps sustain (60s)** | **~1,000 req/s** in the 60s sustain window (70,010 / 70,010; 864 req/s mean including 20s ramp) | **5 ms** | **10 ms** | **19 ms** | **0%** |
+| **A — open-model sustain** | **70,010 / 70,010** OK, Cnt/s **864.32** (ramp included). Offered: `-Dtarget.rps=1000` for 60s after a 20s ramp — plateau is the report’s Requests/sec chart | **5 ms** | **10 ms** | **19 ms** | **0%** |
 | B — Burst past capacity (50) | 63 allowed / 237 denied, first 429 at request #53 | — | — | — | 0% |
 | C — Latency under concurrency (30 users, closed model, same-host Redis) | 33,128 req/s | 1 ms | 2 ms | 4 ms | 0% |
 
 **Headline report (Scenario A):**
 [`load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html`](load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html)
 
-#### How Scenario A was measured (reproducible)
+#### How Scenario A was measured (every number has a file)
 
 Source: [`src/test/java/simulations/SustainedThroughputSimulation.java`](src/test/java/simulations/SustainedThroughputSimulation.java).
+Raw report: [`…/sustainedthroughputsimulation-20260818172653414/index.html`](load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html)
+(Stats table: Total **70010**, OK **70010**, KO **0**, Cnt/s **864.32**, 95th pct **10**, mean **5**).
 
-| | |
+| Claim | Where it lives |
 |---|---|
-| Model | **Open** (`rampUsersPerSec` → `constantUsersPerSec`), not a closed N-user loop |
-| Target | `GET /api/v1/resource`, 20s ramp 1→**1,000 rps**, then **60s at 1,000 rps** |
-| Tenants | **200** rotating `X-API-Key`s (`loadtest-tenant-0` … `199`) so this is 1k **decisions**/s, not one client at 1k rps |
-| Per-key cap | still `default-capacity=50` / `default-refill-rate=10` |
-| Success | HTTP **200 and 429** are both OK; KO = 5xx / connection errors |
-| Topology | 1 Spring Boot instance (`mvnw spring-boot:run`) + Redis 7 in Docker Desktop (Windows) |
+| 70,010 / 70,010, 0 KO, Cnt/s 864.32, p95 10 ms | Gatling **Stats** table in that `index.html` |
+| ~1,000 rps after ramp | Same HTML, **Requests / sec** chart — *not* the Cnt/s cell (Cnt/s averages in the 20s ramp) |
+| 200 tenants | `TENANT_POOL_SIZE` in the simulation (default 200). Gatling does not print tenant count |
+| Offered 1,000 rps | `-Dtarget.rps=1000` (class default is now 1000). Per-key cap is still 50 burst / 10 tokens/s |
+| Success | HTTP **200 and 429** both pass the check; KO = 5xx / connection errors |
+| Topology | 1 Spring Boot instance + Redis 7 in Docker Desktop (Windows) |
 | Reproduce | `./mvnw gatling:test -Dgatling.simulationClass=simulations.SustainedThroughputSimulation -Dbase.url=http://127.0.0.1:8080 -Dtarget.rps=1000 -Dramp.seconds=20 -Dsustain.seconds=60` |
 
 The 3-instance + nginx topology was not this 1k run — re-run with `-Dbase.url=http://localhost:8080`
