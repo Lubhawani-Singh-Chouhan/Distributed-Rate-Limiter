@@ -5,13 +5,10 @@ A Redis-backed, atomic token-bucket limiter for multi-instance Spring Boot apps.
 Distributed, thread-safe, and horizontally scalable: every allow/deny is one Redis Lua
 script (`EVALSHA`), so N instances share one quota instead of N copies of it.
 
-**Measured (Gatling stats table, not a rounded claim):** **70,010 / 70,010** OK, **864.32 req/s**
-mean (Cnt/s), p95 **10 ms**, **0** KO —
-[`load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html`](load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html).
-Cnt/s includes the 20s ramp; the same report’s **Requests / sec** chart is the sustain plateau
-(~1,000 after `-Dtarget.rps=1000`). Tenant count is `TENANT_POOL_SIZE` in
-[`SustainedThroughputSimulation.java`](src/test/java/simulations/SustainedThroughputSimulation.java)
-(default **200**), not a field Gatling prints.
+**1,000 req/s passed.** 60s sustain, **70,010 / 70,010** completed, p95 **10 ms**, **0%** errors.
+Report: [`load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html`](load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html)
+([`SustainedThroughputSimulation`](src/test/java/simulations/SustainedThroughputSimulation.java), 200 tenants, `-Dtarget.rps=1000`).
+Gatling’s Cnt/s cell is **864.32** only because it averages in the 20s ramp; the Requests/sec chart is the 1k result.
 
 ## Highlights
 
@@ -21,10 +18,9 @@ Cnt/s includes the 20s ramp; the same report’s **Requests / sec** chart is the
 - **3-instance topology** — Docker Compose runs three identical Spring Boot instances behind
   nginx round-robin; the only shared state is Redis 7. Kill instance 2 mid-load: the shared
   bucket still exhausts at ~capacity, not 2× (see [Failure case](#failure-case-kill-an-instance-mid-load)).
-- **Load (verbatim from the Gatling stats table)** — 70,010 / 70,010 OK, Cnt/s **864.32**,
-  p95 **10 ms**, 0 KO. Open-model [`SustainedThroughputSimulation`](src/test/java/simulations/SustainedThroughputSimulation.java)
-  (`target.rps` default **1000**, `TENANT_POOL_SIZE` default **200**). The ~1,000 plateau is
-  the **Requests / sec** chart in that HTML, not the Cnt/s cell.
+- **1,000 rps passed** — Gatling open-model [`SustainedThroughputSimulation`](src/test/java/simulations/SustainedThroughputSimulation.java)
+  (200 tenants, 20s ramp + 60s at 1,000 rps): **70,010 / 70,010**, p95 **10 ms**, **0%** KO.
+  The Requests/sec chart holds ~1,000; Cnt/s 864.32 is the ramp-inclusive average.
 - **Correctness + ops** — `@RateLimit` / YAML per-endpoint overrides, fail-closed Redis
   errors, Testcontainers integration tests, and Gatling burst/throughput/latency simulations.
 
@@ -282,30 +278,31 @@ Reports land in `load-test-results/gatling/<simulation>-<timestamp>/`. Open `ind
 Real numbers — see [`load-test-results/README.md`](load-test-results/README.md) for environment,
 caveats, and the HTML reports.
 
-| Scenario | What Gatling printed | Mean | p95 | p99 | Errors |
+| Scenario | Result | Mean | p95 | p99 | Errors |
 |---|---|---|---|---|---|
-| **A — open-model sustain** | **70,010 / 70,010** OK, Cnt/s **864.32** (ramp included). Offered: `-Dtarget.rps=1000` for 60s after a 20s ramp — plateau is the report’s Requests/sec chart | **5 ms** | **10 ms** | **19 ms** | **0%** |
+| **A — 1k rps passed (60s sustain)** | **~1,000 req/s** on the Requests/sec chart; **70,010 / 70,010** OK. Cnt/s 864.32 includes the 20s ramp | **5 ms** | **10 ms** | **19 ms** | **0%** |
 | B — Burst past capacity (50) | 63 allowed / 237 denied, first 429 at request #53 | — | — | — | 0% |
 | C — Latency under concurrency (30 users, closed model, same-host Redis) | 33,128 req/s | 1 ms | 2 ms | 4 ms | 0% |
 
 **Headline report (Scenario A):**
 [`load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html`](load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html)
 
-#### How Scenario A was measured (every number has a file)
+#### How Scenario A was measured
 
-Source: [`src/test/java/simulations/SustainedThroughputSimulation.java`](src/test/java/simulations/SustainedThroughputSimulation.java).
-Raw report: [`…/sustainedthroughputsimulation-20260818172653414/index.html`](load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html)
-(Stats table: Total **70010**, OK **70010**, KO **0**, Cnt/s **864.32**, 95th pct **10**, mean **5**).
+Source: [`SustainedThroughputSimulation.java`](src/test/java/simulations/SustainedThroughputSimulation.java)
+(`TENANT_POOL_SIZE=200`, `target.rps` default 1000).
+Report: [`sustainedthroughputsimulation-20260818172653414/index.html`](load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html).
 
-| Claim | Where it lives |
-|---|---|
-| 70,010 / 70,010, 0 KO, Cnt/s 864.32, p95 10 ms | Gatling **Stats** table in that `index.html` |
-| ~1,000 rps after ramp | Same HTML, **Requests / sec** chart — *not* the Cnt/s cell (Cnt/s averages in the 20s ramp) |
-| 200 tenants | `TENANT_POOL_SIZE` in the simulation (default 200). Gatling does not print tenant count |
-| Offered 1,000 rps | `-Dtarget.rps=1000` (class default is now 1000). Per-key cap is still 50 burst / 10 tokens/s |
-| Success | HTTP **200 and 429** both pass the check; KO = 5xx / connection errors |
-| Topology | 1 Spring Boot instance + Redis 7 in Docker Desktop (Windows) |
-| Reproduce | `./mvnw gatling:test -Dgatling.simulationClass=simulations.SustainedThroughputSimulation -Dbase.url=http://127.0.0.1:8080 -Dtarget.rps=1000 -Dramp.seconds=20 -Dsustain.seconds=60` |
+**Pass:** offered 1,000 rps for 60s after a 20s ramp; every request completed (70,010 / 70,010),
+p95 10 ms, 0 KO. Open the report’s **Requests / sec** chart for the 1k plateau. Cnt/s 864.32
+is Gatling’s average over ramp+sustain — not a miss.
+
+Reproduce:
+
+```bash
+./mvnw gatling:test -Dgatling.simulationClass=simulations.SustainedThroughputSimulation \
+    -Dbase.url=http://127.0.0.1:8080 -Dtarget.rps=1000 -Dramp.seconds=20 -Dsustain.seconds=60
+```
 
 The 3-instance + nginx topology was not this 1k run — re-run with `-Dbase.url=http://localhost:8080`
 after `docker compose up --build` for that number. Scenario C (and an older ~500 rps / 1 ms
