@@ -6,11 +6,11 @@ count as Gatling `KO`.
 
 ## Headline run — 1,000 req/s for 60s
 
-**Report:** [`gatling/sustainedthroughputsimulation-20260818040033152/index.html`](gatling/sustainedthroughputsimulation-20260818040033152/index.html)
+**Report:** [`gatling/sustainedthroughputsimulation-20260818172653414/index.html`](gatling/sustainedthroughputsimulation-20260818172653414/index.html)
 
 | | |
 |---|---|
-| Date | 2026-08-18 04:00:36 GMT (duration 1m 19s) |
+| Date | 2026-08-18 17:26:54 GMT (duration 1m 20s) |
 | Simulation | `SustainedThroughputSimulation` |
 | Command | `mvn gatling:test -Dgatling.simulationClass=simulations.SustainedThroughputSimulation -Dbase.url=http://127.0.0.1:8080 -Dtarget.rps=1000 -Dramp.seconds=20 -Dsustain.seconds=60 -Dmax.mean.latency.ms=50` |
 | Target | 1 Spring Boot instance (`mvnw spring-boot:run`) + Redis 7 in Docker Desktop, Windows |
@@ -18,9 +18,9 @@ count as Gatling `KO`.
 | Offered | 20s ramp 1→1000 rps, then 60s at 1000 rps |
 | Completed | **70,010 / 70,010** (exactly the offered load) |
 | Errors | **0** (0% KO) |
-| Full-run mean throughput | 875.12 req/s (ramp included) |
-| Sustain (~last 60s) | **~1,001 req/s** (60,061 requests after the ramp) |
-| Latency | mean **9 ms**, p50 7 ms, p75 9 ms, p95 **19 ms**, p99 **42 ms**, max 274 ms |
+| Full-run mean throughput | 864.32 req/s (ramp included) |
+| Sustain (~last 60s) | **~1,000 req/s** |
+| Latency | mean **5 ms**, p50 5 ms, p75 6 ms, p95 **10 ms**, p99 **19 ms**, max 78 ms |
 | Assertions | failed-events ≤ 1% **OK**; mean RT ≤ 50 ms **OK** |
 
 This is the number to quote for a “~1k rps sustained” claim. It is **not** “one client is
@@ -45,7 +45,7 @@ These were captured against a **single app instance** talking to **Redis on the 
 requests in 1.38s. 63 allowed (50 burst + ~14 refill) / 237 × 429. First rejection at
 request #53 — the limiter enforces the configured threshold precisely, not “roughly.”
 
-Same-host Redis explains the 1 ms band vs the 9 ms mean on the Docker-Redis 1k run. The Lua
+Same-host Redis explains the 1 ms band vs the 5 ms mean on the Docker-Redis 1k run. The Lua
 round-trip is still the dominant cost; Docker Desktop adds a host↔container hop.
 
 Committed HTML for those older Gatling runs:
@@ -58,7 +58,8 @@ Committed HTML for those older Gatling runs:
 
 | Folder | What it is |
 |---|---|
-| [`gatling/sustainedthroughputsimulation-20260818040033152/`](gatling/sustainedthroughputsimulation-20260818040033152/index.html) | **Headline 1k rps / 60s sustain** (Scenario A) |
+| [`gatling/sustainedthroughputsimulation-20260818172653414/`](gatling/sustainedthroughputsimulation-20260818172653414/index.html) | **Headline 1k rps / 60s sustain** (Scenario A) |
+| [`gatling/sustainedthroughputsimulation-20260818040033152/`](gatling/sustainedthroughputsimulation-20260818040033152/index.html) | Earlier 1k rps / 60s run (p95 19 ms) |
 | `gatling/burstsimulation-*/` | Burst / correctness (200 and 429 both “pass” in Gatling; use a sequential loop for the exact 200/429 split) |
 | `gatling/sustainedthroughputsimulation-*/` | Sustained throughput (open model) |
 | `gatling/latencyunderconcurrencysimulation-*/` | Closed-model concurrency |

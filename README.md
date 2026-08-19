@@ -3,9 +3,9 @@
 A distributed, Redis-backed **Token Bucket** rate limiter for Spring Boot — thread-safe and
 horizontally scalable across multiple application instances via a single atomic Lua script.
 
-**Measured:** ~**1,000 req/s for 60s** on a single instance (70,010 requests, p95 **19 ms**,
+**Measured:** ~**1,000 req/s for 60s** on a single instance (70,010 requests, p95 **10 ms**,
 **0%** errors). Raw Gatling report:
-[`load-test-results/gatling/sustainedthroughputsimulation-20260818040033152/index.html`](load-test-results/gatling/sustainedthroughputsimulation-20260818040033152/index.html).
+[`load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html`](load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html).
 
 ## Highlights
 
@@ -15,8 +15,8 @@ horizontally scalable across multiple application instances via a single atomic 
 - **3-instance topology** — Docker Compose runs three identical Spring Boot instances behind
   nginx round-robin; the only shared state is Redis 7.
 - **Sustained 1k rps** — Gatling open-model run: 20s ramp + 60s at 1,000 req/s, 200 API keys.
-  Sustain phase held ~1,001 req/s. Virtual threads, a pre-warmed Lettuce pool, and Lua SHA
-  warmup keep latency flat after ramp-up.
+  Sustain phase held ~1,000 req/s (p95 **10 ms**). Virtual threads, a pre-warmed Lettuce pool,
+  and Lua SHA warmup keep latency flat after ramp-up.
 - **Correctness + ops** — `@RateLimit` / YAML per-endpoint overrides, fail-closed Redis
   errors, Testcontainers integration tests, and Gatling burst/throughput/latency simulations.
 
@@ -236,12 +236,12 @@ caveats, and the HTML reports.
 
 | Scenario | Throughput | Mean | p95 | p99 | Errors |
 |---|---|---|---|---|---|
-| **A — 1k rps sustain (60s)** | **~1,001 req/s** in the 60s sustain window (70,010 / 70,010; 875 req/s mean including 20s ramp) | **9 ms** | **19 ms** | **42 ms** | **0%** |
+| **A — 1k rps sustain (60s)** | **~1,000 req/s** in the 60s sustain window (70,010 / 70,010; 864 req/s mean including 20s ramp) | **5 ms** | **10 ms** | **19 ms** | **0%** |
 | B — Burst past capacity (50) | 63 allowed / 237 denied, first 429 at request #53 | — | — | — | 0% |
 | C — Latency under concurrency (30 users, closed model, same-host Redis) | 33,128 req/s | 1 ms | 2 ms | 4 ms | 0% |
 
 **Headline report (Scenario A):**
-[`load-test-results/gatling/sustainedthroughputsimulation-20260818040033152/index.html`](load-test-results/gatling/sustainedthroughputsimulation-20260818040033152/index.html)
+[`load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html`](load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html)
 
 Scenario A was a **single Spring Boot instance** with **Redis 7 in Docker** (Windows). 200
 distinct `X-API-Key` tenants so the test measures limiter throughput, not one client's 10
