@@ -11,7 +11,7 @@ count as Gatling `KO`.
 | | |
 |---|---|
 | Date | 2026-08-18 17:26:54 GMT (duration 1m 20s) |
-| Simulation | `SustainedThroughputSimulation` |
+| Simulation | [`SustainedThroughputSimulation.java`](../src/test/java/simulations/SustainedThroughputSimulation.java) (open model, 200 tenants) |
 | Command | `mvn gatling:test -Dgatling.simulationClass=simulations.SustainedThroughputSimulation -Dbase.url=http://127.0.0.1:8080 -Dtarget.rps=1000 -Dramp.seconds=20 -Dsustain.seconds=60 -Dmax.mean.latency.ms=50` |
 | Target | 1 Spring Boot instance (`mvnw spring-boot:run`) + Redis 7 in Docker Desktop, Windows |
 | Workload | Open model, 200 rotating `X-API-Key` tenants, `GET /api/v1/resource` |

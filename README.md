@@ -1,7 +1,9 @@
-# Distributed Rate Limiter
+# throttlr
 
-A distributed, Redis-backed **Token Bucket** rate limiter for Spring Boot — thread-safe and
-horizontally scalable across multiple application instances via a single atomic Lua script.
+A Redis-backed, atomic token-bucket limiter for multi-instance Spring Boot apps.
+
+Distributed, thread-safe, and horizontally scalable: every allow/deny is one Redis Lua
+script (`EVALSHA`), so N instances share one quota instead of N copies of it.
 
 **Measured:** ~**1,000 req/s for 60s** on a single instance (70,010 requests, p95 **10 ms**,
 **0%** errors). Raw Gatling report:
@@ -13,10 +15,11 @@ horizontally scalable across multiple application instances via a single atomic 
   app instances cannot double-allow. A servlet `Filter` at `HIGHEST_PRECEDENCE` rejects
   over-quota traffic before the controller (and before auth, if any).
 - **3-instance topology** — Docker Compose runs three identical Spring Boot instances behind
-  nginx round-robin; the only shared state is Redis 7.
-- **Sustained 1k rps** — Gatling open-model run: 20s ramp + 60s at 1,000 req/s, 200 API keys.
-  Sustain phase held ~1,000 req/s (p95 **10 ms**). Virtual threads, a pre-warmed Lettuce pool,
-  and Lua SHA warmup keep latency flat after ramp-up.
+  nginx round-robin; the only shared state is Redis 7. Kill instance 2 mid-load: the shared
+  bucket still exhausts at ~capacity, not 2× (see [Failure case](#failure-case-kill-an-instance-mid-load)).
+- **Sustained 1k rps** — Gatling **open model** (`SustainedThroughputSimulation`): 20s ramp +
+  60s at 1,000 req/s across **200 tenants**. Sustain held ~1,000 req/s (p95 **10 ms**).
+  Virtual threads, a pre-warmed Lettuce pool, and Lua SHA warmup keep latency flat after ramp-up.
 - **Correctness + ops** — `@RateLimit` / YAML per-endpoint overrides, fail-closed Redis
   errors, Testcontainers integration tests, and Gatling burst/throughput/latency simulations.
 
@@ -48,28 +51,67 @@ All three app instances are the exact same Docker image, differing only in `SERV
 `INSTANCE_ID`. They share nothing with each other directly — the only shared state is Redis,
 and every read-modify-write against that state happens inside one atomic Lua script.
 
-### Request sequence
+### Atomic request path
+
+One round trip. Redis runs the Lua script to completion before any other command on
+that key can run — so two app instances cannot both consume the last token.
 
 ```mermaid
 sequenceDiagram
-    participant C as Client
-    participant N as nginx
-    participant App as App instance
-    participant R as Redis
+    autonumber
+    actor Client
+    participant Filter as RateLimitFilter
+    participant Redis
 
-    C->>N: GET /api/v1/resource (X-API-Key: acme)
-    N->>App: proxy_pass (round-robin)
-    App->>App: RateLimitFilter resolves client key + rule
-    App->>R: EVALSHA token_bucket.lua (bucket_key, capacity, refillRate, now, 1)
-    R->>R: refill tokens by elapsed time, then try to consume 1 (atomic)
-    R-->>App: [allowed, remainingTokens, retryAfterMs]
+    Client->>Filter: GET /api/v1/resource<br/>X-API-Key: acme
+    Filter->>Filter: resolve client key + rule
+    Filter->>Redis: EVALSHA token_bucket.lua<br/>(bucket, capacity, refillRate, now, 1)
+    rect rgb(226, 245, 226)
+        Note over Redis: Atomic (no GET-then-SET race)<br/>HMGET → refill by elapsed time → consume 1 → HSET
+    end
+    Redis-->>Filter: [allowed, remaining, retryAfterMs]
     alt allowed
-        App->>App: set X-RateLimit-Remaining header
-        App-->>C: 200 OK + demo payload
+        Filter-->>Client: 200 OK + X-RateLimit-Remaining
     else denied
-        App-->>C: 429 Too Many Requests + Retry-After + JSON body
+        Filter-->>Client: 429 Too Many Requests + Retry-After
     end
 ```
+
+### Failure case: kill an instance mid-load
+
+This is the case a naive limiter gets wrong. In-memory counters (even behind sticky
+sessions) reset when a node dies: the client lands on a surviving instance and receives a
+**fresh** bucket. throttlr does not — the bucket lives in Redis, not in the JVM that crashed.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant nginx
+    participant A2 as instance-2
+    participant A1 as instance-1 / 3
+    participant Redis
+
+    Client->>nginx: GET /api/v1/resource (X-API-Key: acme)
+    nginx->>A2: round-robin
+    A2->>Redis: EVALSHA consume 1
+    Note over A2: docker kill app-instance-2
+    Client->>nginx: same key, load continues
+    nginx->>A1: instance-2 is gone
+    A1->>Redis: EVALSHA consume 1 (same hash)
+    Note over Redis: Crash does not refill or reset tokens.<br/>Quota still exhausts at capacity, not 2×.
+```
+
+```bash
+docker compose up --build -d
+./scripts/verify-failover-quota.sh http://localhost:8080 20 80
+# Windows: .\scripts\verify-failover-quota.ps1 http://localhost:8080 20 80
+```
+
+The script sends 20 requests through nginx (you should see all three `servedByInstance`
+values), **`docker kill`s `app-instance-2`**, then keeps going until the shared bucket
+trips `429`. Pass = 200s stay under `capacity + refill×elapsed` (not ~2× capacity), no 200s
+from the dead instance, and 429s still happen. A few nginx 502s right after the kill are
+expected; they are not extra quota. The container is started again at the end.
 
 ## Tech stack
 
@@ -101,27 +143,21 @@ is topped up based on how much time has passed since it was last touched, capped
 `capacity`. If there's at least 1 token available, the request is allowed and a token is
 deducted; otherwise it's rejected with `429` and a `Retry-After` estimate.
 
-### Why a Lua script, not "GET then SET" from Java
+### Why Lua / `EVALSHA` — not a Redis transaction, and not in-memory + sticky sessions
 
-The naive implementation — `GET` the current token count in Java, compute the new value,
-`SET` it back — has a race condition: if two requests for the same client hit two different
-app instances (or even two threads on the same instance) at nearly the same time, both can
-read the same "5 tokens remaining," both decide "yes, allowed," and both write back "4
-remaining" — silently granting one extra request the bucket should never have allowed. Under
-real concurrent load this isn't a rare edge case, it's the default behavior.
-
-The fix is to make "read current state → compute refill → decide → write new state" a single
-atomic operation. Redis executes a Lua script to completion before processing any other
-command on that connection, so [`token_bucket.lua`](src/main/resources/scripts/token_bucket.lua)
-does the entire refill-then-consume decision server-side, in one round trip, with no window
-for another caller to interleave. This is what makes the limiter correct across **many app
-instances**, not just thread-safe within one JVM.
-
-`TokenBucketService.tryConsume()` executes this script via Spring Data Redis's
-`RedisTemplate#execute(RedisScript, ...)`, which transparently uses `EVALSHA` (sending only the
-script's SHA1 hash, not its full body) after the first call, falling back to `EVAL` on a
-`NOSCRIPT` response — exactly the "cache the SHA" behavior the spec calls for, without any
-manual bookkeeping in this codebase.
+`GET` then `SET` from Java is racy: two instances can both read "1 token left" and both
+allow. `WATCH`/`MULTI` fixes that only with a retry loop, and under contention (the exact
+moment a bucket is almost empty) those retries stampede. A distributed lock (Redlock) adds a
+second round trip and a new failure mode — lock TTL vs. script duration. **In-memory counters
+plus sticky sessions** look simpler and avoid Redis, but they are a correctness bug dressed
+as an architecture: a deploy, scale-out, or `docker kill` moves the client onto a JVM whose
+map is empty, so they get a full burst again; stickiness also dies with the node. Lua is the
+boring trade-off that actually holds: Redis runs
+[`token_bucket.lua`](src/main/resources/scripts/token_bucket.lua) to completion before any
+other command, so refill + consume + write is **one round trip, no retries, no affinity**.
+`EVALSHA` (via `RedisTemplate#execute(RedisScript, ...)`) sends the SHA after the first load
+instead of the script body on every request; `NOSCRIPT` falls back to `EVAL`. That is why
+killing instance 2 mid-load does not reset anyone's quota.
 
 ### Per-endpoint / per-client overrides
 
@@ -197,12 +233,19 @@ docker compose up --build
 
 # Prove the shared global limit survives being spread across instances:
 ./scripts/verify-distributed-limit.sh http://localhost:8080 80
+
+# Prove the quota still holds when a node dies mid-load:
+./scripts/verify-failover-quota.sh http://localhost:8080 20 80
 ```
 
 `verify-distributed-limit.sh` fires repeated requests with one client key through nginx,
 prints which instance served each one (proving load balancing), and confirms the client still
 gets a `429` once its shared bucket is exhausted — regardless of which instance actually
 handled any individual request.
+
+`verify-failover-quota.sh` (PowerShell: `verify-failover-quota.ps1`) does the same **and**
+`docker kill`s `app-instance-2` after 20 requests. Remaining nodes keep spending the Redis
+hash; the client does not get a second full burst.
 
 ### Tests
 
@@ -243,22 +286,32 @@ caveats, and the HTML reports.
 **Headline report (Scenario A):**
 [`load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html`](load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html)
 
-Scenario A was a **single Spring Boot instance** with **Redis 7 in Docker** (Windows). 200
-distinct `X-API-Key` tenants so the test measures limiter throughput, not one client's 10
-token/s refill. One key is still capped at `default-capacity=50` / `default-refill-rate=10`.
-The 3-instance + nginx topology was not this 1k run — re-run with `-Dbase.url=http://localhost:8080`
-after `docker compose up --build` for that number.
+#### How Scenario A was measured (reproducible)
 
-Scenario C (and an older ~500 rps / 1 ms Scenario A) were captured against **same-host Redis
-with no Docker hop**; see the load-test README.
+Source: [`src/test/java/simulations/SustainedThroughputSimulation.java`](src/test/java/simulations/SustainedThroughputSimulation.java).
+
+| | |
+|---|---|
+| Model | **Open** (`rampUsersPerSec` → `constantUsersPerSec`), not a closed N-user loop |
+| Target | `GET /api/v1/resource`, 20s ramp 1→**1,000 rps**, then **60s at 1,000 rps** |
+| Tenants | **200** rotating `X-API-Key`s (`loadtest-tenant-0` … `199`) so this is 1k **decisions**/s, not one client at 1k rps |
+| Per-key cap | still `default-capacity=50` / `default-refill-rate=10` |
+| Success | HTTP **200 and 429** are both OK; KO = 5xx / connection errors |
+| Topology | 1 Spring Boot instance (`mvnw spring-boot:run`) + Redis 7 in Docker Desktop (Windows) |
+| Reproduce | `./mvnw gatling:test -Dgatling.simulationClass=simulations.SustainedThroughputSimulation -Dbase.url=http://127.0.0.1:8080 -Dtarget.rps=1000 -Dramp.seconds=20 -Dsustain.seconds=60` |
+
+The 3-instance + nginx topology was not this 1k run — re-run with `-Dbase.url=http://localhost:8080`
+after `docker compose up --build` for that number. Scenario C (and an older ~500 rps / 1 ms
+Scenario A) used **same-host Redis with no Docker hop**; see the load-test README.
 
 ## Design decisions & trade-offs
 
-- **Lua script vs. distributed lock vs. `WATCH`/`MULTI`**: a Redis lock (e.g. Redlock) would
-  work but adds a second round trip (acquire, then act, then release) and a whole new failure
-  mode (lock expiry vs. operation duration). `WATCH`/`MULTI` optimistic transactions would need
-  a retry loop under contention. A single Lua script gets atomicity in exactly one round trip
-  with no retry logic needed — simpler and faster.
+- **Lua / `EVALSHA` vs. `WATCH`/`MULTI` vs. in-memory + sticky sessions**: a Redis lock
+  (e.g. Redlock) would work but adds a second round trip and a lock-TTL failure mode.
+  `WATCH`/`MULTI` needs a retry loop that storms when the bucket is almost empty. Sticky
+  in-memory counters avoid Redis until a node dies or a deploy moves the client — then the
+  quota silently resets (see [Failure case](#failure-case-kill-an-instance-mid-load)). Lua is
+  one round trip, no retries, no affinity.
 - **Token bucket vs. sliding window / fixed window**: fixed windows have a boundary problem
   (2x burst possible right at a window edge). Sliding window log/counter is more precise but
   needs more memory per key (a log of timestamps) or more approximation. Token bucket gives a
