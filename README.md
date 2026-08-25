@@ -230,7 +230,7 @@ curl -H "X-API-Key: demo" http://localhost:8080/api/v1/resource
 
 ```bash
 docker compose up --build
-# nginx listens on :8080 and round-robins across app-instance-1/2/3 (:8081-8083 also exposed directly)
+# nginx listens on :8080 and round-robins across app-instance-1/2/3 (:18081-18083 also exposed directly)
 
 # Prove the shared global limit survives being spread across instances:
 ./scripts/verify-distributed-limit.sh http://localhost:8080 80
