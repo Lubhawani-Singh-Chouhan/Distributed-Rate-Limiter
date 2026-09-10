@@ -10,6 +10,36 @@ Report: [`load-test-results/gatling/sustainedthroughputsimulation-20260818172653
 ([`SustainedThroughputSimulation`](src/test/java/simulations/SustainedThroughputSimulation.java), 200 tenants, `-Dtarget.rps=1000`).
 Gatling’s Cnt/s cell is **864.32** only because it averages in the 20s ramp; the Requests/sec chart is the 1k result.
 
+## Demo
+
+![throttlr demo: one client bursts past quota through nginx across 3 instances, gets 429 with Retry-After, then the live bucket status confirms it](docs/throttlr_demo.gif)
+
+~13s, real terminal output (no cuts): health check → a normal request (note `servedByInstance`,
+proving nginx actually load-balanced it) → one client key bursting past its quota through nginx
+until the *shared* Redis bucket trips `429` → the live `/api/v1/limiter/status` bucket state
+right after.
+
+Reproduce it yourself: `docker compose up --build -d`, then `./scripts/demo.sh`.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Client(["Client"]) --> LB["nginx (round-robin LB)"]
+    LB --> A1["app-instance-1<br/>Spring Boot"]
+    LB --> A2["app-instance-2<br/>Spring Boot"]
+    LB --> A3["app-instance-3<br/>Spring Boot"]
+    A1 --> Redis[("Redis 7<br/>token_bucket.lua")]
+    A2 --> Redis
+    A3 --> Redis
+```
+
+All three app instances are the exact same Docker image, differing only in `SERVER_PORT` /
+`INSTANCE_ID`. They share nothing with each other directly — the only shared state is Redis,
+and every read-modify-write against that state happens inside one atomic Lua script. Request
+flow, failure-mode diagrams, and the "why Lua" rationale are further down in
+[How it works](#how-it-works).
+
 ## Highlights
 
 - **Atomic distributed quota** — Redis Lua (`EVALSHA`) so concurrent requests across many
@@ -35,22 +65,9 @@ rate-limit *logic* into Redis too (as an atomic Lua script) so that no matter wh
 handles a given request, the decision is made against one consistent, race-free source of
 truth.
 
-## Architecture
+## Request flow & failure handling
 
-```mermaid
-flowchart LR
-    Client(["Client"]) --> LB["nginx (round-robin LB)"]
-    LB --> A1["app-instance-1<br/>Spring Boot"]
-    LB --> A2["app-instance-2<br/>Spring Boot"]
-    LB --> A3["app-instance-3<br/>Spring Boot"]
-    A1 --> Redis[("Redis 7<br/>token_bucket.lua")]
-    A2 --> Redis
-    A3 --> Redis
-```
-
-All three app instances are the exact same Docker image, differing only in `SERVER_PORT` /
-`INSTANCE_ID`. They share nothing with each other directly — the only shared state is Redis,
-and every read-modify-write against that state happens inside one atomic Lua script.
+(Architecture-at-a-glance diagram is at the [top](#architecture); this section goes one level deeper.)
 
 ### Atomic request path
 
