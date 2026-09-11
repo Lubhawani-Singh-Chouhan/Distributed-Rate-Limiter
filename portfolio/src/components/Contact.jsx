@@ -1,37 +1,49 @@
-import { EMAIL, GITHUB_URL, LINKEDIN_URL } from "../links";
+import Reveal from "./Reveal";
+import { GITHUB_URL, LINKEDIN_URL, MAILTO } from "../links";
 
 export default function Contact() {
   return (
-    <section id="contact" className="px-5 sm:px-8">
-      <div className="mx-auto max-w-5xl border-x border-t border-line px-5 py-16 sm:px-10 sm:py-20">
-        <h2 className="font-serif text-2xl text-ink md:text-3xl">Contact</h2>
-        <p className="mt-6 max-w-lg text-base leading-relaxed text-muted">
-          Open to conversations about backend systems, full-stack work, and
-          interesting problems.
-        </p>
-        <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:gap-8">
-          <a
-            href={EMAIL}
-            className="text-base text-ink underline-offset-4 hover:text-accent hover:underline"
-          >
-            Email
-          </a>
-          <a
-            href={LINKEDIN_URL}
-            className="text-base text-ink underline-offset-4 hover:text-accent hover:underline"
-          >
-            LinkedIn
-          </a>
-          <a
-            href={GITHUB_URL}
-            target="_blank"
-            rel="noreferrer"
-            className="text-base text-ink underline-offset-4 hover:text-accent hover:underline"
-          >
-            GitHub
-          </a>
-        </div>
+    <Reveal
+      as="section"
+      id="contact"
+      className="mx-auto max-w-[600px] py-[60px] text-center sm:py-20 lg:py-[100px]"
+    >
+      <h2 className="mb-5 font-mono text-base font-normal text-green">
+        <span className="mr-2">04.</span>What&rsquo;s Next?
+      </h2>
+
+      <h3
+        className="text-lightest-slate"
+        style={{ fontSize: "clamp(40px, 5vw, 60px)" }}
+      >
+        Get In Touch
+      </h3>
+
+      <p className="mt-4 text-[17px] sm:text-lg">
+        My inbox is always open. Whether it&rsquo;s a backend role, a question
+        about one of these projects, or just to say hi, I&rsquo;ll do my best to
+        get back to you.
+      </p>
+
+      <div className="mt-[50px] flex flex-wrap items-center justify-center gap-6">
+        <a className="v4-button" href={MAILTO}>
+          Say Hello
+        </a>
       </div>
-    </section>
+
+      <div className="mt-8 flex flex-wrap items-center justify-center gap-6 font-mono text-[13px]">
+        <a
+          href={GITHUB_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-link"
+        >
+          GitHub
+        </a>
+        <a href={LINKEDIN_URL} className="inline-link">
+          LinkedIn
+        </a>
+      </div>
+    </Reveal>
   );
 }

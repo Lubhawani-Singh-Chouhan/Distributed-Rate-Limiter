@@ -1,28 +1,254 @@
 @import "tailwindcss";
 
+/* Design tokens ported from Brittany Chiang's v4 (github.com/bchiang7/v4).
+   Calibre and SF Mono are licensed fonts, so this uses v4's own fallbacks. */
 @theme {
-  --font-sans: "Source Sans 3", ui-sans-serif, system-ui, sans-serif;
-  --font-serif: "Instrument Serif", ui-serif, Georgia, "Times New Roman", serif;
-  --color-bg: #0c0c0b;
-  --color-panel: #141412;
-  --color-ink: #f3efe6;
-  --color-muted: #9c9588;
-  --color-line: #2a2926;
-  --color-accent: #d4c4a8;
+  --font-sans: "Inter", "San Francisco", "SF Pro Text", -apple-system, system-ui,
+    sans-serif;
+  --font-mono: "Fira Code", "SF Mono", "Fira Mono", "Roboto Mono", monospace;
+
+  --color-dark-navy: #020c1b;
+  --color-navy: #0a192f;
+  --color-light-navy: #112240;
+  --color-lightest-navy: #233554;
+  --color-dark-slate: #495670;
+  --color-slate: #8892b0;
+  --color-light-slate: #a8b2d1;
+  --color-lightest-slate: #ccd6f6;
+  --color-near-white: #e6f1ff;
+  --color-green: #64ffda;
+  --color-green-tint: rgba(100, 255, 218, 0.1);
+
+  --ease-v4: cubic-bezier(0.645, 0.045, 0.355, 1);
+}
+
+:root {
+  --navy-shadow: rgba(2, 12, 27, 0.7);
+  --transition: all 0.25s cubic-bezier(0.645, 0.045, 0.355, 1);
 }
 
 html {
+  box-sizing: border-box;
   scroll-behavior: smooth;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-dark-slate) var(--color-navy);
 }
 
 body {
-  background: var(--color-bg);
-  color: var(--color-ink);
+  margin: 0;
+  overflow-x: hidden;
+  background-color: var(--color-navy);
+  color: var(--color-slate);
   font-family: var(--font-sans);
+  font-size: 20px;
+  line-height: 1.3;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@media (max-width: 480px) {
+  body {
+    font-size: 18px;
+  }
+}
+
+body.menu-open {
+  overflow: hidden;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0 0 10px;
+  color: var(--color-lightest-slate);
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+p {
+  margin: 0 0 15px;
+}
+
+p:last-child {
+  margin-bottom: 0;
 }
 
 ::selection {
-  background: var(--color-accent);
-  color: var(--color-bg);
+  background-color: var(--color-lightest-navy);
+  color: var(--color-lightest-slate);
+}
+
+:focus-visible {
+  outline: 2px dashed var(--color-green);
+  outline-offset: 3px;
+}
+
+::-webkit-scrollbar {
+  width: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-navy);
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-dark-slate);
+  border: 3px solid var(--color-navy);
+  border-radius: 10px;
+}
+
+/* v4 link styles */
+.nav-link {
+  display: inline-block;
+  color: inherit;
+  text-decoration: none;
+  transition: var(--transition);
+}
+
+.nav-link:hover,
+.nav-link:focus-visible {
+  color: var(--color-green);
+}
+
+.inline-link {
+  display: inline-block;
+  position: relative;
+  color: var(--color-green);
+  text-decoration: none;
+  transition: var(--transition);
+}
+
+.inline-link::after {
+  content: "";
+  display: block;
+  width: 0;
+  height: 1px;
+  position: relative;
+  bottom: 0.37em;
+  background-color: var(--color-green);
+  opacity: 0.5;
+  transition: var(--transition);
+}
+
+.inline-link:hover::after,
+.inline-link:focus-visible::after {
+  width: 100%;
+}
+
+/* v4 button mixins */
+.v4-button {
+  display: inline-block;
+  color: var(--color-green);
+  background-color: transparent;
+  border: 1px solid var(--color-green);
+  border-radius: 4px;
+  padding: 1.25rem 1.75rem;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1;
+  text-decoration: none;
+  transition: var(--transition);
+}
+
+.v4-button:hover,
+.v4-button:focus-visible {
+  box-shadow: 4px 4px 0 0 var(--color-green);
+  transform: translate(-5px, -5px);
+}
+
+.v4-button-sm {
+  padding: 0.75rem 1rem;
+  font-size: 13px;
+}
+
+.v4-button-sm:hover,
+.v4-button-sm:focus-visible {
+  box-shadow: 3px 3px 0 0 var(--color-green);
+  transform: translate(-4px, -4px);
+}
+
+.card-shadow {
+  box-shadow: 0 10px 30px -15px var(--navy-shadow);
+  transition: var(--transition);
+}
+
+.card-shadow:hover,
+.card-shadow:focus-within {
+  box-shadow: 0 20px 30px -15px var(--navy-shadow);
+}
+
+/* v4 ▹ bulleted lists */
+.fancy-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.fancy-list li {
+  position: relative;
+  padding-left: 30px;
+  margin-bottom: 10px;
+  font-size: 18px;
+}
+
+.fancy-list li::before {
+  content: "▹";
+  position: absolute;
+  left: 0;
+  color: var(--color-green);
+}
+
+.skills-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.skills-list li {
+  position: relative;
+  padding-left: 20px;
+  margin-bottom: 8px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.skills-list li::before {
+  content: "▹";
+  position: absolute;
+  left: 0;
+  color: var(--color-green);
+  font-size: 14px;
+  line-height: 14px;
+}
+
+/* Fade-in-on-scroll, driven by IntersectionObserver instead of ScrollReveal */
+.reveal {
+  opacity: 0;
+  transform: translateY(20px);
+  transition:
+    opacity 0.5s var(--ease-v4),
+    transform 0.5s var(--ease-v4);
+}
+
+.reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .v4-button:hover,
+  .v4-button:focus-visible {
+    transform: none;
+  }
 }
