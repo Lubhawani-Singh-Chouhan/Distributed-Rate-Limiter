@@ -2,11 +2,12 @@
 
 Single-page developer portfolio. Static React + Vite + Tailwind CSS. No backend, no database.
 
-The UI is adapted from [Brittany Chiang's v4 portfolio](https://github.com/bchiang7/v4) (MIT): the same
-navy/green palette, monospace section numbers, sticky nav, fixed side rails, `▹` lists, and offset
-button shadows. Two deliberate differences: Calibre and SF Mono are licensed fonts, so this uses v4's
-own fallbacks (Inter + Fira Code); and the fade-in-on-scroll is a small `IntersectionObserver` hook
-instead of ScrollReveal, so there is no animation dependency in the bundle.
+Design inspired by [Brittany Chiang](https://brittanychiang.com) — the UI is adapted from her
+[v4 portfolio](https://github.com/bchiang7/v4) (MIT): the same navy/green palette, monospace section
+numbers, sticky nav, fixed side rails, `▹` lists, and offset button shadows. Two deliberate
+differences: Calibre and SF Mono are licensed fonts, so this uses v4's own fallbacks (Inter + Fira
+Code); and the fade-in-on-scroll is a small `IntersectionObserver` hook instead of ScrollReveal, so
+there is no animation dependency in the bundle.
 
 ## Run locally
 
