@@ -1,45 +1,86 @@
-import { GITHUB_URL, LINKEDIN_URL, RESUME_URL } from "../links";
+import { useEffect, useState } from "react";
+import { MAILTO, RESUME_URL } from "../links";
+
+function FadeUp({ delay, mounted, children }) {
+  return (
+    <div
+      className={`reveal${mounted ? " is-visible" : ""}`}
+      style={{ transitionDelay: `${delay}ms` }}
+    >
+      {children}
+    </div>
+  );
+}
 
 export default function Hero() {
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => setMounted(true), 150);
+    return () => clearTimeout(timeout);
+  }, []);
+
   return (
-    <section id="top" className="px-5 sm:px-8">
-      <div className="mx-auto max-w-5xl border-x border-line px-5 py-20 sm:px-10 sm:py-28 md:py-36">
-        <p className="text-sm tracking-[0.18em] text-muted uppercase">
-          Software Engineer
-        </p>
-        <h1 className="mt-6 font-serif text-5xl leading-[1.05] tracking-tight text-ink sm:text-6xl md:text-7xl">
-          Lubhawani Singh
+    <section
+      id="top"
+      className="mx-auto flex min-h-screen max-w-[1000px] flex-col items-start justify-center"
+    >
+      <FadeUp delay={100} mounted={mounted}>
+        <h1 className="mb-[30px] ml-1 font-mono font-normal text-green" style={{ fontSize: "clamp(14px, 5vw, 16px)" }}>
+          Hi, my name is
         </h1>
-        <p className="mt-6 max-w-xl text-lg text-ink/90 sm:text-xl">
-          Software Engineer @ Verizon | Backend &amp; Full-Stack
-        </p>
-        <p className="mt-4 max-w-xl text-base leading-relaxed text-muted sm:text-lg">
-          Java/Spring Boot, Python, distributed systems. Based in Hyderabad,
-          India.
-        </p>
-        <div className="mt-10 flex flex-wrap gap-3">
+      </FadeUp>
+
+      <FadeUp delay={200} mounted={mounted}>
+        <h2
+          className="m-0 text-lightest-slate"
+          style={{ fontSize: "clamp(40px, 8vw, 80px)" }}
+        >
+          Lubhawani Singh.
+        </h2>
+      </FadeUp>
+
+      <FadeUp delay={300} mounted={mounted}>
+        <h3
+          className="mt-[5px] leading-[0.9] text-slate"
+          style={{ fontSize: "clamp(40px, 8vw, 80px)" }}
+        >
+          I build backend systems.
+        </h3>
+      </FadeUp>
+
+      <FadeUp delay={400} mounted={mounted}>
+        <p className="mt-5 max-w-[540px] text-slate">
+          I&rsquo;m a Software Engineer at{" "}
           <a
-            href={GITHUB_URL}
+            href="https://www.verizon.com/"
             target="_blank"
             rel="noreferrer"
-            className="inline-flex items-center border border-ink px-5 py-2.5 text-sm text-ink transition-colors hover:bg-ink hover:text-bg"
+            className="inline-link"
           >
-            GitHub
+            Verizon
+          </a>{" "}
+          working across backend and full-stack &mdash; mostly Java, Spring
+          Boot, and Python, with a side interest in distributed systems. Based
+          in Hyderabad, India.
+        </p>
+      </FadeUp>
+
+      <FadeUp delay={500} mounted={mounted}>
+        <div className="mt-[50px] flex flex-wrap gap-4">
+          <a className="v4-button" href={MAILTO}>
+            Get In Touch
           </a>
           <a
-            href={LINKEDIN_URL}
-            className="inline-flex items-center border border-line px-5 py-2.5 text-sm text-muted transition-colors hover:border-ink hover:text-ink"
-          >
-            LinkedIn
-          </a>
-          <a
+            className="v4-button"
             href={RESUME_URL}
-            className="inline-flex items-center border border-line px-5 py-2.5 text-sm text-muted transition-colors hover:border-ink hover:text-ink"
+            target="_blank"
+            rel="noreferrer"
           >
             Download Resume
           </a>
         </div>
-      </div>
+      </FadeUp>
     </section>
   );
 }
