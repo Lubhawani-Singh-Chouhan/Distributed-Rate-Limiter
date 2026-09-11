@@ -23,15 +23,7 @@ export default function Footer() {
       </div>
 
       <p className="font-mono text-xs leading-relaxed text-light-slate">
-        Built by Lubhawani Singh &middot; design adapted from{" "}
-        <a
-          href="https://github.com/bchiang7/v4"
-          target="_blank"
-          rel="noreferrer"
-          className="inline-link"
-        >
-          Brittany Chiang&rsquo;s v4
-        </a>
+        Built by Lubhawani Singh
       </p>
     </footer>
   );
