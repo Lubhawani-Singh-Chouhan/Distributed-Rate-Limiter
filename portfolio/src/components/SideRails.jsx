@@ -42,8 +42,7 @@ export default function SideRails() {
             href={MAILTO}
             className="nav-link my-5 p-2.5 font-mono text-xs tracking-[0.1em] transition-transform hover:-translate-y-[3px] [writing-mode:vertical-rl]"
           >
-            {/* TODO: add link — shows a placeholder until EMAIL is filled in */}
-            {EMAIL || "your.email@example.com"}
+            {EMAIL}
           </a>
         </div>
       </div>

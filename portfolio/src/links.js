@@ -1,15 +1,13 @@
 export const GITHUB_URL = "https://github.com/Lubhawani-Singh-Chouhan";
 
-// TODO: add link
-export const LINKEDIN_URL = "#";
+export const LINKEDIN_URL =
+  "https://www.linkedin.com/in/lubhawani-singh-chouhan-02b134249";
 
-// TODO: add link — swap in the real address, e.g. "you@example.com"
-export const EMAIL = "";
+export const EMAIL = "lubhawani2002@gmail.com";
 
-// TODO: add link — drop the PDF at public/resume.pdf
 export const RESUME_URL = "/resume.pdf";
 
-export const MAILTO = EMAIL ? `mailto:${EMAIL}` : "#";
+export const MAILTO = `mailto:${EMAIL}`;
 
 export const SOCIALS = [
   { name: "GitHub", url: GITHUB_URL },

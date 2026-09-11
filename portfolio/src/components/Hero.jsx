@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { MAILTO, RESUME_URL } from "../links";
+import { RESUME_URL } from "../links";
 
 function FadeUp({ delay, mounted, children }) {
   return (
@@ -68,7 +68,7 @@ export default function Hero() {
 
       <FadeUp delay={500} mounted={mounted}>
         <div className="mt-[50px] flex flex-wrap gap-4">
-          <a className="v4-button" href={MAILTO}>
+          <a className="v4-button" href="#contact">
             Get In Touch
           </a>
           <a
