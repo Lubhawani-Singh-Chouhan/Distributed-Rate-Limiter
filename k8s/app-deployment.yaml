@@ -27,6 +27,20 @@ spec:
               value: "6379"
             - name: SERVER_PORT
               value: "8080"
+            - name: INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: RATELIMITER_ON_REDIS_FAILURE
+              value: "fail-closed"
+            - name: RATELIMITER_DEFAULT_CAPACITY
+              value: "50"
+            - name: RATELIMITER_DEFAULT_REFILL_RATE
+              value: "10"
+            - name: RATELIMITER_REDIS_FAILURE_THRESHOLD
+              value: "5"
+            - name: RATELIMITER_REDIS_FAILURE_COOLDOWN_MS
+              value: "2000"
             - name: JAVA_OPTS
               value: "-Xms128m -Xmx384m -XX:+UseG1GC -Djava.net.preferIPv4Stack=true"
           readinessProbe:
