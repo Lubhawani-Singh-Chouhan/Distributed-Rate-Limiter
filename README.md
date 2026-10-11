@@ -121,7 +121,8 @@ instances with drifted clocks could refill too fast (ahead clock) or stall refil
 clock) for the **same** Redis hash. The script now calls `redis.call('TIME')` and converts
 seconds+microseconds to epoch millis. Every instance shares one clock: Redis. A leftover
 future `last_refill` from an older build is clamped (`elapsed < 0 → 0`) so it cannot mint
-tokens.
+tokens. `TokenBucketServiceTest` replays the pre-fix script with a test-only +1h clock and
+shows that path refills an empty bucket, while `tryConsume` (no `now` argument) stays denied.
 
 ## Tech stack
 
@@ -252,10 +253,14 @@ docker compose up --build
 ./scripts/verify-failover-quota.sh http://localhost:8080 20 80
 ```
 
-`verify-distributed-limit.sh` fires repeated requests with one client key through nginx,
-prints which instance served each one (proving load balancing), and confirms the client still
-gets a `429` once its shared bucket is exhausted — regardless of which instance actually
-handled any individual request.
+`verify-distributed-limit.sh` (PowerShell: `verify-distributed-limit.ps1`) fires one client
+key through nginx, prints which instance served each 200, and exits non-zero unless
+
+`allowed <= capacity + refill × elapsed + 1`
+
+(defaults 50 and 10/s, override with `CAPACITY` / `REFILL`). That ceiling is one shared
+bucket. Three independent buckets clear it. A few hundred milliseconds of curl overhead are
+inside `elapsed`.
 
 `verify-failover-quota.sh` (PowerShell: `verify-failover-quota.ps1`) does the same **and**
 `docker kill`s `app-instance-2` after 20 requests. Remaining nodes keep spending the Redis
@@ -331,8 +336,8 @@ docker compose up --build -d
 ./scripts/verify-distributed-limit.sh http://localhost:8080 80
 ```
 
-`verify-distributed-limit.sh` is the correctness check: one client through nginx, allowed
-count must stay near `capacity + refill×elapsed`, not 3× capacity. Scenario C remains a
+`verify-distributed-limit.sh` is the correctness check: one client through nginx, and the
+script fails if allowed requests exceed `capacity + refill×elapsed + 1`. Scenario C remains a
 closed-model loopback micro-benchmark and must not be quoted next to Scenario A.
 
 ## Design decisions & trade-offs
@@ -381,8 +386,10 @@ closed-model loopback micro-benchmark and must not be quoted next to Scenario A.
 ## Run on kind
 
 Manifests live in [`k8s/`](k8s/) (Redis Deployment+Service, app Deployment with 3 replicas,
-Service, `kustomization.yaml`). **Manifests provided, not verified in CI** — this environment
-had no Docker/`kind`. On a machine with Docker:
+Service, `kustomization.yaml`). Redis host, failure mode, capacity, and refill are env vars
+on the app container (`REDIS_HOST`, `RATELIMITER_ON_REDIS_FAILURE`,
+`RATELIMITER_DEFAULT_CAPACITY`, `RATELIMITER_DEFAULT_REFILL_RATE`). **Manifests provided, not
+verified in CI** — this environment had no Docker engine and no `kind`. On a machine with Docker:
 
 ```bash
 kind create cluster --name throttlr
