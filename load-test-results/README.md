@@ -35,6 +35,17 @@ key (burst 50). 200 keys are how 1k limiter **decisions**/sec stay inside the bu
 It is also **not** the 3-instance nginx topology. Re-run the same command against
 `http://localhost:8080` after `docker compose up --build` for that measurement.
 
+## 3-instance nginx topology
+
+Not measured in the hardening pass: the agent host had **no Docker daemon**. Commands:
+
+```bash
+docker compose up --build -d
+./mvnw gatling:test -Dgatling.simulationClass=simulations.SustainedThroughputSimulation \
+    -Dbase.url=http://localhost:8080 -Dtarget.rps=1000 -Dramp.seconds=20 -Dsustain.seconds=60
+./scripts/verify-distributed-limit.sh http://localhost:8080 80
+```
+
 ## Earlier sandbox runs (same-host Redis, no Docker)
 
 These were captured against a **single app instance** talking to **Redis on the same host**
@@ -44,7 +55,7 @@ These were captured against a **single app instance** talking to **Redis on the 
 |---|---|---|---|---|---|---|
 | A' — Sustained ~500 rps | `-Dtarget.rps=500 -Dramp.seconds=10 -Dsustain.seconds=30` | 437.6 req/s mean over ramp+sustain | 1 ms | 1 ms | 2 ms | 0% |
 | B — Burst past capacity (50) | 300 sequential requests, one client | 63 allowed / 237 denied, first 429 at #53 | n/a | n/a | n/a | 0% |
-| C — Latency under concurrency | `-Dconcurrent.users=30 -Dduration.seconds=8` | 33,128 req/s (closed model) | 1 ms | 2 ms | 4 ms | 0% |
+| C — Closed-model micro-benchmark (not comparable to A) | `-Dconcurrent.users=30 -Dduration.seconds=8` | 33,128 req/s (loopback Redis; not open-model RPS) | 1 ms | 2 ms | 4 ms | 0% |
 
 **Scenario B detail:** `default-capacity=50`, `default-refill-rate=10`, 300 back-to-back
 requests in 1.38s. 63 allowed (50 burst + ~14 refill) / 237 × 429. First rejection at

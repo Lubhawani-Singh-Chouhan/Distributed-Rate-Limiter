@@ -21,8 +21,8 @@ Gatling’s Cnt/s cell is **864.32** only because it averages in the 20s ramp; t
 - **1,000 rps passed** — Gatling open-model [`SustainedThroughputSimulation`](src/test/java/simulations/SustainedThroughputSimulation.java)
   (200 tenants, 20s ramp + 60s at 1,000 rps): **70,010 / 70,010**, p95 **10 ms**, **0%** KO.
   The Requests/sec chart holds ~1,000; Cnt/s 864.32 is the ramp-inclusive average.
-- **Correctness + ops** — `@RateLimit` / YAML per-endpoint overrides, fail-closed Redis
-  errors, Testcontainers integration tests, and Gatling burst/throughput/latency simulations.
+- **Correctness + ops** — Redis TIME (not JVM clocks), idle-key PEXPIRE, configurable
+  fail-closed/fail-open with a built-in short-circuit, Testcontainers, Gatling.
 
 ## Problem statement
 
@@ -66,9 +66,9 @@ sequenceDiagram
 
     Client->>Filter: GET /api/v1/resource<br/>X-API-Key: acme
     Filter->>Filter: resolve client key + rule
-    Filter->>Redis: EVALSHA token_bucket.lua<br/>(bucket, capacity, refillRate, now, 1)
+    Filter->>Redis: EVALSHA token_bucket.lua<br/>(bucket, capacity, refillRate, requested)
     rect rgb(226, 245, 226)
-        Note over Redis: Atomic (no GET-then-SET race)<br/>HMGET → refill by elapsed time → consume 1 → HSET
+        Note over Redis: Atomic (Redis TIME, not JVM clock)<br/>TIME → HMGET → refill → consume → HSET → PEXPIRE
     end
     Redis-->>Filter: [allowed, remaining, retryAfterMs]
     alt allowed
@@ -114,6 +114,15 @@ trips `429`. Pass = 200s stay under `capacity + refill×elapsed` (not ~2× capac
 from the dead instance, and 429s still happen. A few nginx 502s right after the kill are
 expected; they are not extra quota. The container is started again at the end.
 
+### Why Redis TIME
+
+Lua used to take `now` from the JVM (`System.currentTimeMillis()` as ARGV). Two app
+instances with drifted clocks could refill too fast (ahead clock) or stall refill (behind
+clock) for the **same** Redis hash. The script now calls `redis.call('TIME')` and converts
+seconds+microseconds to epoch millis. Every instance shares one clock: Redis. A leftover
+future `last_refill` from an older build is clamped (`elapsed < 0 → 0`) so it cannot mint
+tokens.
+
 ## Tech stack
 
 Java 21 · Spring Boot 3.3 · Redis 7 (Lua scripting via `EVAL`/`EVALSHA`) · Docker & Docker
@@ -156,9 +165,9 @@ map is empty, so they get a full burst again; stickiness also dies with the node
 boring trade-off that actually holds: Redis runs
 [`token_bucket.lua`](src/main/resources/scripts/token_bucket.lua) to completion before any
 other command, so refill + consume + write is **one round trip, no retries, no affinity**.
-`EVALSHA` (via `RedisTemplate#execute(RedisScript, ...)`) sends the SHA after the first load
-instead of the script body on every request; `NOSCRIPT` falls back to `EVAL`. That is why
-killing instance 2 mid-load does not reset anyone's quota.
+Time is Redis TIME, not the JVM. `EVALSHA` (via `RedisTemplate#execute(RedisScript, ...)`)
+sends the SHA after the first load; `NOSCRIPT` falls back to `EVAL`. That is why killing
+instance 2 mid-load does not reset anyone's quota.
 
 ### Per-endpoint / per-client overrides
 
@@ -185,6 +194,9 @@ ratelimiter:
   excluded-paths:
     - /actuator/health
     - /api/v1/limiter/**
+  on-redis-failure: fail-closed  # fail-closed | fail-open
+  redis-failure-threshold: 5
+  redis-failure-cooldown-ms: 2000
 ```
 
 High-traffic defaults (all overridable by env): Java 21 virtual threads, Tomcat
@@ -203,6 +215,7 @@ so the same image runs unmodified as any of the 3 instances.
 | `GET/POST /api/v1/orders` | Yes (`@RateLimit(capacity=20, refillRate=5)`) | Demonstrates per-endpoint override |
 | `GET /api/v1/limiter/status?clientKey=...` | No | Peeks a client's current bucket state (read-only, never consumes a token) |
 | `GET /api/v1/limiter/instance` | No | Returns which instance served the request |
+| `GET /api/v1/limiter/degraded` | No | Fail-open counter, consecutive Redis failures, short-circuit flag |
 | `GET /actuator/health` | No | Standard Spring Boot health check |
 
 A denied request gets:
@@ -280,9 +293,9 @@ caveats, and the HTML reports.
 
 | Scenario | Result | Mean | p95 | p99 | Errors |
 |---|---|---|---|---|---|
-| **A — 1k rps passed (60s sustain)** | **~1,000 req/s** on the Requests/sec chart; **70,010 / 70,010** OK. Cnt/s 864.32 includes the 20s ramp | **5 ms** | **10 ms** | **19 ms** | **0%** |
+| **A — 1k rps passed (60s sustain, single instance)** | **~1,000 req/s** on the Requests/sec chart; **70,010 / 70,010** OK. Cnt/s 864.32 includes the 20s ramp | **5 ms** | **10 ms** | **19 ms** | **0%** |
 | B — Burst past capacity (50) | 63 allowed / 237 denied, first 429 at request #53 | — | — | — | 0% |
-| C — Latency under concurrency (30 users, closed model, same-host Redis) | 33,128 req/s | 1 ms | 2 ms | 4 ms | 0% |
+| C — Closed-model micro-benchmark (not comparable to A) | 33,128 req/s, 30 users looping as fast as possible on **loopback Redis**, 8s. This is not open-model RPS and is not a capacity claim. | 1 ms | 2 ms | 4 ms | 0% |
 
 **Headline report (Scenario A):**
 [`load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html`](load-test-results/gatling/sustainedthroughputsimulation-20260818172653414/index.html)
@@ -304,9 +317,23 @@ Reproduce:
     -Dbase.url=http://127.0.0.1:8080 -Dtarget.rps=1000 -Dramp.seconds=20 -Dsustain.seconds=60
 ```
 
-The 3-instance + nginx topology was not this 1k run — re-run with `-Dbase.url=http://localhost:8080`
-after `docker compose up --build` for that number. Scenario C (and an older ~500 rps / 1 ms
-Scenario A) used **same-host Redis with no Docker hop**; see the load-test README.
+**Topology for Scenario A:** one Spring Boot process (`mvnw spring-boot:run`) + Redis 7 in
+Docker Desktop on Windows (JDK 21, 2026-08-18). It is **not** the 3-instance nginx stack.
+
+**3-instance topology (not re-measured here):** this agent environment has no Docker daemon,
+so Gatling was not run against `docker compose up --build`. Do not treat Scenario A as a
+cluster number. To measure nginx + 3 apps + Redis:
+
+```bash
+docker compose up --build -d
+./mvnw gatling:test -Dgatling.simulationClass=simulations.SustainedThroughputSimulation \
+    -Dbase.url=http://localhost:8080 -Dtarget.rps=1000 -Dramp.seconds=20 -Dsustain.seconds=60
+./scripts/verify-distributed-limit.sh http://localhost:8080 80
+```
+
+`verify-distributed-limit.sh` is the correctness check: one client through nginx, allowed
+count must stay near `capacity + refill×elapsed`, not 3× capacity. Scenario C remains a
+closed-model loopback micro-benchmark and must not be quoted next to Scenario A.
 
 ## Design decisions & trade-offs
 
@@ -326,12 +353,13 @@ Scenario A) used **same-host Redis with no Docker hop**; see the load-test READM
   per-endpoint override with a different `capacity` would read/write the *same* Redis hash as
   the client's global-default bucket, corrupting both. Scoping by rule keeps overrides
   isolated without needing a separate Redis key namespace per feature.
-- **Fail-closed, not fail-open, on Redis errors**: if the Lua script call itself fails
-  unexpectedly, `TokenBucketService` denies the request rather than allowing it through
-  unchecked. For a component whose entire job is protecting shared infrastructure from abuse,
-  "reject on uncertainty" is the safer default than "allow on uncertainty" — the trade-off is
-  Redis becoming a single point of failure for availability, which the "Future improvements"
-  section below addresses.
+- **Fail-closed vs fail-open**: `ratelimiter.on-redis-failure` defaults to **fail-closed**
+  (503 + `RATE_LIMITER_UNAVAILABLE` when Redis is down). **Fail-open** allows the request,
+  logs WARN, and increments `failOpenAllowCount` on `GET /api/v1/limiter/degraded`. After
+  `redis-failure-threshold` consecutive errors, a built-in short-circuit skips Redis for
+  `redis-failure-cooldown-ms` so every request does not wait on a 1s command timeout. No
+  Resilience4j: a counter and a timestamp. Trade-off: fail-closed makes Redis a SPOF for
+  availability; fail-open makes Redis a SPOF for protection.
 - **Filter registered at `Ordered.HIGHEST_PRECEDENCE`, not a `HandlerInterceptor`**: an
   interceptor only runs once Spring MVC has resolved a handler, which in a real deployment
   would be *after* any Spring Security filter chain. Registering as a servlet `Filter` at the
@@ -339,17 +367,42 @@ Scenario A) used **same-host Redis with no Docker hop**; see the load-test READM
   all — matching the spec's "before auth, if any" requirement even though this demo has no
   auth layer to actually order against.
 
+## Limitations
+
+- **Single Redis node is a SPOF.** There is no Sentinel or Cluster in this repo. If Redis
+  dies, fail-closed returns 503; fail-open lets traffic through unmetered.
+- **Per-key token bucket only.** No global cluster-wide RPS cap, no sliding window, no
+  dynamic quota API — YAML / `@RateLimit` are deploy-time.
+- **Idle keys expire** (`PEXPIRE` = 2× time-to-full-refill). A client that returns after TTL
+  gets a full bucket again.
+- **Load numbers are topology-specific.** Scenario A (1k rps) is one JVM + Docker Redis on
+  Windows, not the 3-instance nginx stack.
+
+## Run on kind
+
+Manifests live in [`k8s/`](k8s/) (Redis Deployment+Service, app Deployment with 3 replicas,
+Service, `kustomization.yaml`). **Manifests provided, not verified in CI** — this environment
+had no Docker/`kind`. On a machine with Docker:
+
+```bash
+kind create cluster --name throttlr
+docker build -t throttlr:local .
+kind load docker-image throttlr:local --name throttlr
+kubectl apply -k k8s/
+kubectl rollout status deployment/redis
+kubectl rollout status deployment/throttlr
+kubectl port-forward svc/throttlr 8080:8080
+curl -H "X-API-Key: demo" http://localhost:8080/api/v1/resource
+```
+
+No HPA, Ingress, or Helm.
+
 ## Future improvements
 
-- **Redis Cluster / Sentinel** instead of a single Redis node, for HA — a single Redis is a
-  single point of failure for the whole rate limiter today.
+- **Redis Cluster / Sentinel** for Redis HA.
 - **Admin API for dynamic per-endpoint config** so limits can be tuned without a redeploy
   (currently `ratelimiter.endpoints` is static YAML).
-- **Circuit breaker around the Redis call** so a Redis outage degrades gracefully (e.g.
-  fail-open with alerting, rather than a hard fail-closed that takes down every protected
-  endpoint) instead of the current all-or-nothing fail-closed behavior.
-- **Distributed tracing** (e.g. a trace id propagated through nginx → app → Redis call) to
-  make the sequence diagram above something you can actually observe per-request in production.
+- **Distributed tracing** (e.g. a trace id propagated through nginx → app → Redis call).
 
 ## License
 

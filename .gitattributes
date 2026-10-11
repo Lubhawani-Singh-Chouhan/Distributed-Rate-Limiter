@@ -1,0 +1,3 @@
+# Keep GitHub's language bar on Java, not Gatling HTML/JS.
+load-test-results/** linguist-vendored
+load-test-results/** linguist-generated
