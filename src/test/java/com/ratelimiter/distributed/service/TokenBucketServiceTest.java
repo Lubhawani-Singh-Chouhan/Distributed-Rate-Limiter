@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.ratelimiter.distributed.RateLimiterApplication;
 import com.ratelimiter.distributed.integration.AbstractRedisIntegrationTest;
 import com.ratelimiter.distributed.model.RateLimitResult;
+import com.ratelimiter.distributed.util.RateLimitKeyBuilder;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -12,8 +13,11 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIf;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 
 /**
  * Exercises {@link TokenBucketService} against a real Redis instance (see
@@ -23,10 +27,14 @@ import org.springframework.boot.test.context.SpringBootTest;
  * concurrently never over-allowing beyond capacity.
  */
 @SpringBootTest(classes = RateLimiterApplication.class)
+@EnabledIf("com.ratelimiter.distributed.integration.RedisEnvironment#available")
 class TokenBucketServiceTest extends AbstractRedisIntegrationTest {
 
     @Autowired
     private TokenBucketService tokenBucketService;
+
+    @Autowired
+    private RedisTemplate<String, String> redisTemplate;
 
     @Test
     void freshBucketAllowsBurstUpToCapacity() {
@@ -144,6 +152,81 @@ class TokenBucketServiceTest extends AbstractRedisIntegrationTest {
 
         RateLimitResult overflow = tokenBucketService.tryConsume(clientKey, capacity, refillRate, 5);
         assertThat(overflow.isAllowed()).isFalse();
+    }
+
+    @Test
+    void refillUsesRedisTimeSoACallerFutureTimestampCannotInflateTheBucket() {
+        String clientKey = "clock-skew-client";
+        long capacity = 5;
+        long refillRate = 1;
+
+        RateLimitResult drain = tokenBucketService.tryConsume(clientKey, capacity, refillRate, capacity);
+        assertThat(drain.isAllowed()).isTrue();
+        assertThat(tokenBucketService.tryConsume(clientKey, capacity, refillRate).isAllowed()).isFalse();
+
+        // Old design: ARGV[3]=now, ARGV[4]=requested. A 24h-ahead instance would pass
+        // now=now+86400000 and refill the empty bucket to capacity in one EVAL.
+        // New design: ARGV[3]=requested; a fourth ARGV is ignored. Empty bucket stays denied.
+        String bucketKey = RateLimitKeyBuilder.bucketKey(clientKey);
+        DefaultRedisScript<List> script = new DefaultRedisScript<>();
+        script.setScriptText(loadProductionScript());
+        script.setResultType(List.class);
+
+        @SuppressWarnings("unchecked")
+        List<Long> withStrayFutureNow = redisTemplate.execute(
+                script,
+                List.of(bucketKey),
+                "5",
+                "1",
+                "1",
+                String.valueOf(System.currentTimeMillis() + 86_400_000L));
+
+        assertThat(withStrayFutureNow.get(0)).as("must not treat a caller timestamp as now").isEqualTo(0L);
+    }
+
+    @Test
+    void refillAnchoredToRedisTimeAllowsTokensAfterElapsedRedisTime() {
+        String clientKey = "redis-time-refill-client";
+        long capacity = 5;
+        long refillRate = 5;
+
+        assertThat(tokenBucketService.tryConsume(clientKey, capacity, refillRate, capacity).isAllowed()).isTrue();
+        assertThat(tokenBucketService.tryConsume(clientKey, capacity, refillRate).isAllowed()).isFalse();
+
+        String bucketKey = RateLimitKeyBuilder.bucketKey(clientKey);
+        DefaultRedisScript<Long> rewind = new DefaultRedisScript<>(
+                "local t = redis.call('TIME') "
+                        + "local now = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000) "
+                        + "redis.call('HSET', KEYS[1], 'tokens', '0', 'last_refill', tostring(now - 2000)) "
+                        + "return now",
+                Long.class);
+        redisTemplate.execute(rewind, List.of(bucketKey));
+
+        RateLimitResult afterRedisElapsed = tokenBucketService.tryConsume(clientKey, capacity, refillRate);
+        assertThat(afterRedisElapsed.isAllowed())
+                .as("2s of Redis TIME elapsed at 5 tokens/s must refill the empty bucket")
+                .isTrue();
+    }
+
+    @Test
+    void idleBucketKeyExpires() throws InterruptedException {
+        String clientKey = "ttl-client";
+        long capacity = 1;
+        long refillRate = 1; // time-to-full = 1s; PEXPIRE = 2s (2x margin)
+
+        assertThat(tokenBucketService.tryConsume(clientKey, capacity, refillRate).isAllowed()).isTrue();
+        String bucketKey = RateLimitKeyBuilder.bucketKey(clientKey);
+        Long ttlMs = redisTemplate.getExpire(bucketKey, TimeUnit.MILLISECONDS);
+        assertThat(ttlMs).isNotNull();
+        assertThat(ttlMs).isGreaterThan(0L);
+        assertThat(ttlMs).isLessThanOrEqualTo(2_500L);
+
+        Thread.sleep(2_600);
+        assertThat(redisTemplate.hasKey(bucketKey)).isFalse();
+    }
+
+    private static String loadProductionScript() {
+        return com.ratelimiter.distributed.util.LuaScriptLoader.load("scripts/token_bucket.lua");
     }
 
     @Test

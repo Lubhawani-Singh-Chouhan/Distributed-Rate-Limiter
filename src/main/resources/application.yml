@@ -53,6 +53,9 @@ ratelimiter:
     - /actuator/health
     - /actuator/health/**
     - /api/v1/limiter/**
+  on-redis-failure: fail-closed # fail-closed | fail-open
+  redis-failure-threshold: 5
+  redis-failure-cooldown-ms: 2000
   # Per-endpoint overrides go here, e.g.:
   #   endpoints:
   #     /api/v1/some-path:

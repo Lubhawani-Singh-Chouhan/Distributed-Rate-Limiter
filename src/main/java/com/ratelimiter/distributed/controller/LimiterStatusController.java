@@ -49,4 +49,23 @@ public class LimiterStatusController {
     public ResponseEntity<String> instance() {
         return ResponseEntity.ok(InstanceIdentity.current());
     }
+
+    /**
+     * Fail-open counter and short-circuit state. Unthrottled (see excluded-paths).
+     */
+    @GetMapping("/degraded")
+    public ResponseEntity<DegradedStatus> degraded() {
+        return ResponseEntity.ok(new DegradedStatus(
+                properties.getOnRedisFailure().name(),
+                tokenBucketService.getFailOpenAllowCount(),
+                tokenBucketService.getConsecutiveFailures(),
+                tokenBucketService.isShortCircuitOpen()));
+    }
+
+    public record DegradedStatus(
+            String onRedisFailure,
+            long failOpenAllowCount,
+            int consecutiveFailures,
+            boolean shortCircuitOpen) {
+    }
 }

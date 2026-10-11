@@ -46,7 +46,10 @@ public class RateLimiterWarmup implements InitializingBean {
             for (Future<Void> future : executor.invokeAll(tasks)) {
                 future.get();
             }
+            log.info("Rate limiter hot path is ready");
+        } catch (Exception e) {
+            log.warn("Rate limiter warmup could not reach Redis (fail-open/fail-closed still apply at request time): {}",
+                    e.getMessage());
         }
-        log.info("Rate limiter hot path is ready");
     }
 }

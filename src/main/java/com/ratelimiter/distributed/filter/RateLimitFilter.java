@@ -66,13 +66,34 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
         response.setHeader("X-RateLimit-Limit", String.valueOf(rule.getCapacity()));
         response.setHeader("X-RateLimit-Remaining", String.valueOf(result.getRemainingTokens()));
+        if (result.isRedisUnavailable()) {
+            response.setHeader("X-RateLimit-Degraded", "true");
+        }
 
         if (!result.isAllowed()) {
-            rejectWithTooManyRequests(response, result);
+            if (result.isRedisUnavailable()) {
+                rejectUnavailable(response, result);
+            } else {
+                rejectWithTooManyRequests(response, result);
+            }
             return;
         }
 
         filterChain.doFilter(request, response);
+    }
+
+    private void rejectUnavailable(HttpServletResponse response, RateLimitResult result) throws IOException {
+        response.setStatus(HttpStatus.SERVICE_UNAVAILABLE.value());
+        response.setHeader("Retry-After", "1");
+        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        RateLimitErrorResponse body = RateLimitErrorResponse.builder()
+                .error("RATE_LIMITER_UNAVAILABLE")
+                .message("Rate limiter cannot reach Redis. Request denied (fail-closed).")
+                .retryAfterMs(1000)
+                .remainingTokens(result.getRemainingTokens())
+                .status(HttpStatus.SERVICE_UNAVAILABLE.value())
+                .build();
+        objectMapper.writeValue(response.getWriter(), body);
     }
 
     private void rejectWithTooManyRequests(HttpServletResponse response, RateLimitResult result) throws IOException {

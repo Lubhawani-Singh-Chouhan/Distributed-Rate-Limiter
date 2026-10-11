@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import com.ratelimiter.distributed.RateLimiterApplication;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIf;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.SpringBootTest.WebEnvironment;
@@ -23,6 +24,7 @@ import org.springframework.test.context.TestPropertySource;
         "ratelimiter.default-refill-rate=1",
         "ratelimiter.key-strategy=ip"
 })
+@EnabledIf("com.ratelimiter.distributed.integration.RedisEnvironment#available")
 class RateLimitFilterIntegrationTest extends AbstractRedisIntegrationTest {
 
     @LocalServerPort
