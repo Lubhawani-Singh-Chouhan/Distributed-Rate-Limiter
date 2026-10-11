@@ -1,7 +1,11 @@
 package com.ratelimiter.distributed.config;
 
 import com.ratelimiter.distributed.util.LuaScriptLoader;
+import io.lettuce.core.ClientOptions;
+import io.lettuce.core.TimeoutOptions;
+import java.time.Duration;
 import java.util.List;
+import org.springframework.boot.autoconfigure.data.redis.LettuceClientConfigurationBuilderCustomizer;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -34,6 +38,17 @@ public class RedisConfig {
         template.setHashValueSerializer(new StringRedisSerializer());
         template.afterPropertiesSet();
         return template;
+    }
+
+    @Bean
+    public LettuceClientConfigurationBuilderCustomizer lettuceSteadyStateCustomizer() {
+        return builder -> builder
+                .commandTimeout(Duration.ofSeconds(1))
+                .clientOptions(ClientOptions.builder()
+                        .autoReconnect(true)
+                        .disconnectedBehavior(ClientOptions.DisconnectedBehavior.REJECT_COMMANDS)
+                        .timeoutOptions(TimeoutOptions.enabled(Duration.ofSeconds(1)))
+                        .build());
     }
 
     @Bean

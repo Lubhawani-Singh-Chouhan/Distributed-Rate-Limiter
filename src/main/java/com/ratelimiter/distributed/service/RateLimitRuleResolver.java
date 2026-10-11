@@ -4,6 +4,7 @@ import com.ratelimiter.distributed.annotation.RateLimit;
 import com.ratelimiter.distributed.config.RateLimiterProperties;
 import com.ratelimiter.distributed.model.RateLimitRule;
 import jakarta.servlet.http.HttpServletRequest;
+import java.util.concurrent.ConcurrentHashMap;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
@@ -20,15 +21,22 @@ import org.springframework.web.servlet.HandlerMapping;
  *   <li>{@code ratelimiter.endpoints["/path"]} override in application.yml</li>
  *   <li>{@code ratelimiter.default-capacity} / {@code default-refill-rate} (global fallback)</li>
  * </ol>
+ *
+ * Resolved rules are cached by {@code METHOD URI} so the hot path does not call
+ * {@code HandlerMapping.getHandler} on every request (that lookup dominated latency
+ * under 500–1000 req/s until the first path was cached).
  */
 @Slf4j
 @Service
 public class RateLimitRuleResolver {
 
     public static final String DEFAULT_SCOPE = "default";
+    private static final int MAX_CACHED_PATHS = 2048;
 
     private final RateLimiterProperties properties;
     private final HandlerMapping handlerMapping;
+    private final RateLimitRule defaultRule;
+    private final ConcurrentHashMap<String, RateLimitRule> ruleCache = new ConcurrentHashMap<>();
 
     // Explicit constructor (rather than @RequiredArgsConstructor) so the @Qualifier is
     // guaranteed to land on the constructor parameter Spring actually injects: Spring MVC
@@ -38,9 +46,24 @@ public class RateLimitRuleResolver {
                                   @Qualifier("requestMappingHandlerMapping") HandlerMapping handlerMapping) {
         this.properties = properties;
         this.handlerMapping = handlerMapping;
+        this.defaultRule = RateLimitRule.of(
+                properties.getDefaultCapacity(), properties.getDefaultRefillRate(), 1L, DEFAULT_SCOPE);
     }
 
     public RateLimitRule resolve(HttpServletRequest request) {
+        String cacheKey = request.getMethod() + ' ' + request.getRequestURI();
+        RateLimitRule cached = ruleCache.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
+        RateLimitRule resolved = resolveUncached(request);
+        if (ruleCache.size() < MAX_CACHED_PATHS) {
+            ruleCache.putIfAbsent(cacheKey, resolved);
+        }
+        return resolved;
+    }
+
+    private RateLimitRule resolveUncached(HttpServletRequest request) {
         RateLimit annotation = resolveAnnotation(request);
         if (annotation != null) {
             String scope = "endpoint:" + request.getMethod() + ":" + request.getRequestURI();
@@ -55,7 +78,7 @@ public class RateLimitRuleResolver {
             return RateLimitRule.of(capacity, refillRate, 1L, scope);
         }
 
-        return RateLimitRule.of(properties.getDefaultCapacity(), properties.getDefaultRefillRate(), 1L, DEFAULT_SCOPE);
+        return defaultRule;
     }
 
     private RateLimit resolveAnnotation(HttpServletRequest request) {

@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: throttlr
+  labels:
+    app: throttlr
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: throttlr
+  template:
+    metadata:
+      labels:
+        app: throttlr
+    spec:
+      containers:
+        - name: app
+          image: throttlr:local
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8080
+          env:
+            - name: REDIS_HOST
+              value: redis
+            - name: REDIS_PORT
+              value: "6379"
+            - name: SERVER_PORT
+              value: "8080"
+            - name: INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: RATELIMITER_ON_REDIS_FAILURE
+              value: "fail-closed"
+            - name: RATELIMITER_DEFAULT_CAPACITY
+              value: "50"
+            - name: RATELIMITER_DEFAULT_REFILL_RATE
+              value: "10"
+            - name: RATELIMITER_REDIS_FAILURE_THRESHOLD
+              value: "5"
+            - name: RATELIMITER_REDIS_FAILURE_COOLDOWN_MS
+              value: "2000"
+            - name: JAVA_OPTS
+              value: "-Xms128m -Xmx384m -XX:+UseG1GC -Djava.net.preferIPv4Stack=true"
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: throttlr
+spec:
+  selector:
+    app: throttlr
+  ports:
+    - port: 8080
+      targetPort: 8080

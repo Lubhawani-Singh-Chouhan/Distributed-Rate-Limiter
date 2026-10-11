@@ -2,6 +2,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: ratelimiter-redis
+    command: redis-server --save "" --appendonly no --tcp-backlog 511 --tcp-keepalive 60 --maxclients 20000 --hz 100
     networks:
       - ratelimiter-net
     ports:
@@ -29,10 +30,18 @@ services:
       INSTANCE_ID: app-instance-1
       # Heap sized for a ~5k concurrent burst on virtual threads (cheap stacks).
       # Override downward (e.g. `-Xmx384m`) on memory-constrained Docker Desktop VMs.
-      JAVA_OPTS: "-Xms256m -Xmx768m -Xss256k"
+      JAVA_OPTS: "-Xms256m -Xmx768m -Xss256k -XX:+UseG1GC -XX:MaxGCPauseMillis=20 -XX:+AlwaysPreTouch -Djava.net.preferIPv4Stack=true"
     mem_limit: 1g
     ports:
-      - "8081:8080"
+      # Host-side port only (container always listens on 8080 internally, per
+      # SERVER_PORT above) - deliberately using the 1808x range rather than 8081-8083
+      # since those are extremely common defaults that collide easily with other local
+      # projects/services (e.g. a totally unrelated app already using 8081 on your
+      # machine). nginx on :8080 is the actual shared entry point everything else in
+      # this repo (scripts, Gatling simulations, README examples) targets; these
+      # per-instance ports only matter if you want to bypass nginx and hit one
+      # instance directly for debugging.
+      - "18081:8080"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/actuator/health"]
       interval: 10s
@@ -47,7 +56,7 @@ services:
       <<: *app-instance-env
       INSTANCE_ID: app-instance-2
     ports:
-      - "8082:8080"
+      - "18082:8080"
 
   app-instance-3:
     <<: *app-instance
@@ -56,7 +65,7 @@ services:
       <<: *app-instance-env
       INSTANCE_ID: app-instance-3
     ports:
-      - "8083:8080"
+      - "18083:8080"
 
   nginx:
     image: nginx:1.27-alpine

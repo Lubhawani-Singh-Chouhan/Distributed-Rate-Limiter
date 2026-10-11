@@ -9,13 +9,16 @@
   which two callers can both read the same `tokens` value and both believe they
   successfully consumed the last token (the classic GET-then-SET race).
 
+  Time comes from Redis TIME, not from the caller. App-instance clocks drift;
+  using a caller-supplied `now` would let a fast clock refill extra tokens and a
+  slow clock stall refill. Redis TIME is one clock for every instance.
+
   KEYS[1] - bucket_key                e.g. "ratelimit:bucket:acme-corp"
   ARGV[1] - capacity                  max tokens the bucket can hold (burst size)
   ARGV[2] - refill_rate               tokens added per second
-  ARGV[3] - now_timestamp_ms          caller-supplied "now", in epoch millis
-  ARGV[4] - requested_tokens          tokens this request wants to consume (usually 1)
+  ARGV[3] - requested_tokens          tokens this request wants to consume (usually 1)
 
-  Storage: a Redis Hash with fields `tokens` (float) and `last_refill` (ms, integer-ish).
+  Storage: a Redis Hash with fields `tokens` (float) and `last_refill` (ms).
 
   Returns a 3-element array:
     [1] allowed         1 if the request may proceed, 0 otherwise
@@ -27,24 +30,28 @@ local bucket_key = KEYS[1]
 
 local capacity = tonumber(ARGV[1])
 local refill_rate = tonumber(ARGV[2])
-local now = tonumber(ARGV[3])
-local requested = tonumber(ARGV[4])
+local requested = tonumber(ARGV[3])
 
-if capacity == nil or refill_rate == nil or now == nil or requested == nil then
-  return redis.error_reply("token_bucket.lua: all ARGV values must be numeric")
+if capacity == nil or refill_rate == nil or requested == nil then
+  return redis.error_reply("token_bucket.lua: capacity, refill_rate, and requested_tokens must be numeric")
 end
+
+-- TIME returns {seconds, microseconds}. Convert to epoch millis.
+local redis_time = redis.call("TIME")
+local now = tonumber(redis_time[1]) * 1000 + math.floor(tonumber(redis_time[2]) / 1000)
 
 local bucket = redis.call("HMGET", bucket_key, "tokens", "last_refill")
 local tokens = tonumber(bucket[1])
 local last_refill = tonumber(bucket[2])
 
--- First time we see this client: start with a full bucket, "now" as the refill anchor.
+-- First time we see this client: start with a full bucket, Redis TIME as the refill anchor.
 if tokens == nil or last_refill == nil then
   tokens = capacity
   last_refill = now
 end
 
--- Guard against clock skew across app instances producing a negative elapsed time.
+-- Negative elapsed can only happen if a leftover last_refill was written by an
+-- older caller-supplied clock. Clamp; do not refill from a future stamp.
 local elapsed_ms = now - last_refill
 if elapsed_ms < 0 then
   elapsed_ms = 0
@@ -65,22 +72,23 @@ else
   if refill_rate > 0 then
     retry_after_ms = math.ceil((deficit / refill_rate) * 1000.0)
   else
-    -- A bucket that never refills and is currently short on tokens will never
-    -- satisfy this request; surface a sentinel value the caller can treat as "never".
     retry_after_ms = -1
   end
 end
 
 redis.call("HSET", bucket_key, "tokens", tostring(new_tokens), "last_refill", tostring(now))
 
--- Idle buckets should eventually disappear rather than accumulate forever in Redis.
--- 2x the time needed to go from empty to full is a generous cleanup window.
+-- Idle buckets expire after 2x time-to-full-refill (margin so a slow client is
+-- not evicted the instant the bucket would have refilled). PEXPIRE is ms-precise.
+local ttl_ms
 if refill_rate > 0 then
-  local ttl_seconds = math.ceil((capacity / refill_rate) * 2)
-  if ttl_seconds < 1 then
-    ttl_seconds = 1
+  ttl_ms = math.ceil((capacity / refill_rate) * 2000.0)
+  if ttl_ms < 1000 then
+    ttl_ms = 1000
   end
-  redis.call("EXPIRE", bucket_key, ttl_seconds)
+else
+  ttl_ms = 3600000
 end
+redis.call("PEXPIRE", bucket_key, ttl_ms)
 
 return {allowed, math.floor(new_tokens), retry_after_ms}
